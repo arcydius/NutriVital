@@ -1,0 +1,6 @@
+{
+  "name": "NutriVital",
+  "description": "Plataforma web de nutrición, bienestar y e-commerce saludable con simulador de progreso, proyección de ventas por regresión lineal y panel de administración autenticado.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
