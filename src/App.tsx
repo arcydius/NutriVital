@@ -12,11 +12,18 @@ import {
   Check,
   Plus,
   Lock,
+  Heart,
+  User,
+  Activity,
 } from 'lucide-react';
 import {
   AdminSession,
   AdminUser,
   CartItem,
+  ClientBiometrics,
+  ClientHealthGoals,
+  ClientSession,
+  ClientUser,
   OrderReceipt,
   Product,
   ProductCategory,
@@ -24,6 +31,7 @@ import {
 } from './types/nutrivital';
 import {
   INITIAL_ADMIN_USERS,
+  INITIAL_CLIENT_USERS,
   INITIAL_PRODUCTS,
   INITIAL_SALES_HISTORY,
 } from './data/seedData';
@@ -37,12 +45,18 @@ import { CartDrawer } from './components/CartDrawer';
 import { NutriBotWidget } from './components/NutriBotWidget';
 import { AdminAuthModal } from './components/AdminAuthModal';
 import { AdminDashboard } from './components/AdminDashboard';
+import { ClientAuthModal } from './components/ClientAuthModal';
+import { ClientBiometricsModal } from './components/ClientBiometricsModal';
+import { HealthAnalyticsSection } from './components/HealthAnalyticsSection';
+import { ChartMetricView } from './components/DynamicProgressChart';
 
 const STORAGE_KEYS = {
   PRODUCTS: 'nutrivital_products_v1',
   SALES: 'nutrivital_sales_v1',
   ADMINS: 'nutrivital_admins_v1',
   SESSION: 'nutrivital_admin_session_v1',
+  CLIENTS: 'nutrivital_clients_v2',
+  CLIENT_SESSION: 'nutrivital_client_session_v2',
 };
 
 export default function App() {
@@ -68,7 +82,21 @@ export default function App() {
   const [adminUsers, setAdminUsers] = useState<AdminUser[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.ADMINS);
-      return saved ? JSON.parse(saved) : INITIAL_ADMIN_USERS;
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          // Verify that default demo admin accounts are preserved
+          const missing = INITIAL_ADMIN_USERS.filter(
+            (initU) =>
+              !parsed.some(
+                (p: AdminUser) =>
+                  p.email.toLowerCase() === initU.email.toLowerCase()
+              )
+          );
+          return missing.length > 0 ? [...parsed, ...missing] : parsed;
+        }
+      }
+      return INITIAL_ADMIN_USERS;
     } catch {
       return INITIAL_ADMIN_USERS;
     }
@@ -82,6 +110,92 @@ export default function App() {
       return null;
     }
   });
+
+  // Client & Biometrics Persistent State
+  const [clients, setClients] = useState<ClientUser[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.CLIENTS);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+      return INITIAL_CLIENT_USERS;
+    } catch {
+      return INITIAL_CLIENT_USERS;
+    }
+  });
+
+  const [clientSession, setClientSession] = useState<ClientSession | null>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.CLIENT_SESSION);
+      if (saved) {
+        return JSON.parse(saved);
+      }
+      return {
+        userId: INITIAL_CLIENT_USERS[0].id,
+        name: INITIAL_CLIENT_USERS[0].name,
+        email: INITIAL_CLIENT_USERS[0].email,
+        role: 'Cliente',
+        loggedInAt: new Date().toISOString(),
+      };
+    } catch {
+      return {
+        userId: INITIAL_CLIENT_USERS[0].id,
+        name: INITIAL_CLIENT_USERS[0].name,
+        email: INITIAL_CLIENT_USERS[0].email,
+        role: 'Cliente',
+        loggedInAt: new Date().toISOString(),
+      };
+    }
+  });
+
+  const currentClient = useMemo(() => {
+    return (
+      clients.find((c) => c.id === clientSession?.userId) ??
+      clients[0] ??
+      INITIAL_CLIENT_USERS[0]
+    );
+  }, [clients, clientSession]);
+
+  const [isClientAuthModalOpen, setIsClientAuthModalOpen] = useState<boolean>(false);
+  const [isClientBiometricsModalOpen, setIsClientBiometricsModalOpen] = useState<boolean>(false);
+  const [activeSupplementIds, setActiveSupplementIds] = useState<string[]>(() => {
+    return INITIAL_CLIENT_USERS[0].activeSupplements || ['SUP-OMEGA3', 'SUP-MAGNESIO'];
+  });
+  const [simulatedCalories, setSimulatedCalories] = useState<number>(() => {
+    return INITIAL_CLIENT_USERS[0].biometrics.dailyCalories || 2200;
+  });
+  const [selectedChartMetric, setSelectedChartMetric] = useState<ChartMetricView>('presion');
+
+  // Synchronize simulation defaults when currentClient changes
+  useEffect(() => {
+    if (currentClient) {
+      setActiveSupplementIds(currentClient.activeSupplements || ['SUP-OMEGA3', 'SUP-MAGNESIO']);
+      setSimulatedCalories(currentClient.biometrics.dailyCalories || 2200);
+    }
+  }, [currentClient.id]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEYS.CLIENTS, JSON.stringify(clients));
+    } catch {
+      // Ignore storage errors
+    }
+  }, [clients]);
+
+  useEffect(() => {
+    try {
+      if (clientSession) {
+        localStorage.setItem(STORAGE_KEYS.CLIENT_SESSION, JSON.stringify(clientSession));
+      } else {
+        localStorage.removeItem(STORAGE_KEYS.CLIENT_SESSION);
+      }
+    } catch {
+      // Ignore storage errors
+    }
+  }, [clientSession]);
 
   // UI & Navigation State
   const [activeView, setActiveView] = useState<'client' | 'admin'>('client');
@@ -275,6 +389,21 @@ export default function App() {
   };
 
   const handleAdminLoginSuccess = (session: AdminSession) => {
+    const now = new Date();
+    const formattedDate = `${now.toISOString().split('T')[0]} ${now.toLocaleTimeString('es-ES', {
+      hour: '2-digit',
+      minute: '2-digit',
+    })}`;
+
+    // Update lastLogin timestamp for the logged-in administrator
+    setAdminUsers((prev) =>
+      prev.map((u) =>
+        u.id === session.userId || u.email.toLowerCase() === session.email.toLowerCase()
+          ? { ...u, lastLogin: formattedDate }
+          : u
+      )
+    );
+
     setAdminSession(session);
     setIsAuthModalOpen(false);
     setActiveView('admin');
@@ -282,12 +411,75 @@ export default function App() {
   };
 
   const handleRegisterAdmin = (newAdmin: AdminUser) => {
-    setAdminUsers((prev) => [...prev, newAdmin]);
+    setAdminUsers((prev) => {
+      // Prevent duplicates by email
+      const filtered = prev.filter(
+        (u) => u.email.toLowerCase() !== newAdmin.email.toLowerCase()
+      );
+      return [...filtered, newAdmin];
+    });
   };
 
   const handleAdminLogout = () => {
     setAdminSession(null);
     setActiveView('client');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  // Client & Biometric Handlers
+  const handleUpdateClientBiometrics = (
+    clientId: string,
+    biometrics: ClientBiometrics,
+    goals: ClientHealthGoals
+  ) => {
+    setClients((prev) =>
+      prev.map((c) =>
+        c.id === clientId ? { ...c, biometrics, goals } : c
+      )
+    );
+    setSimulatedCalories(biometrics.dailyCalories);
+  };
+
+  const handleLoginClient = (session: ClientSession) => {
+    setClientSession(session);
+    const matched = clients.find((c) => c.id === session.userId);
+    if (matched) {
+      setActiveSupplementIds(matched.activeSupplements || ['SUP-OMEGA3', 'SUP-MAGNESIO']);
+      setSimulatedCalories(matched.biometrics.dailyCalories || 2200);
+    }
+  };
+
+  const handleRegisterClient = (newClient: ClientUser) => {
+    setClients((prev) => [newClient, ...prev]);
+  };
+
+  const handleLogoutClient = () => {
+    if (clients.length > 0) {
+      setClientSession({
+        userId: clients[0].id,
+        name: clients[0].name,
+        email: clients[0].email,
+        role: 'Cliente',
+        loggedInAt: new Date().toISOString(),
+      });
+    } else {
+      setClientSession(null);
+    }
+  };
+
+  const handleToggleSupplement = (suppId: string) => {
+    setActiveSupplementIds((prev) => {
+      const next = prev.includes(suppId)
+        ? prev.filter((id) => id !== suppId)
+        : [...prev, suppId];
+
+      setClients((all) =>
+        all.map((c) =>
+          c.id === currentClient.id ? { ...c, activeSupplements: next } : c
+        )
+      );
+      return next;
+    });
   };
 
   // Admin CRUD callbacks
@@ -378,6 +570,21 @@ export default function App() {
               Catálogo Saludable
             </a>
             <a
+              href="#mi-salud"
+              onClick={(e) => {
+                e.preventDefault();
+                setActiveView('client');
+                setTimeout(() => {
+                  document
+                    .getElementById('mi-salud')
+                    ?.scrollIntoView({ behavior: 'smooth' });
+                }, 40);
+              }}
+              className="hover:text-emerald-700 transition-colors whitespace-nowrap shrink-0"
+            >
+              Mi Salud & Biometría
+            </a>
+            <a
               href="#progreso"
               onClick={(e) => {
                 e.preventDefault();
@@ -392,22 +599,38 @@ export default function App() {
             >
               Tu Progreso
             </a>
-            <a
-              href="#administrador"
-              onClick={(e) => {
-                e.preventDefault();
-                handleSwitchToAdmin();
-              }}
-              className={`hover:text-emerald-700 transition-colors whitespace-nowrap shrink-0 ${
-                activeView === 'admin' ? 'text-emerald-700 font-semibold' : ''
-              }`}
-            >
-              Administrador
-            </a>
+            {adminSession && (
+              <a
+                href="#administrador"
+                onClick={(e) => {
+                  e.preventDefault();
+                  setActiveView('admin');
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+                className={`hover:text-emerald-700 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
+                  activeView === 'admin' ? 'text-emerald-700 font-semibold' : ''
+                }`}
+              >
+                <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                <span>Panel Administrador</span>
+              </a>
+            )}
           </nav>
 
-          {/* Zone 3: 1 primary action (Shopping Cart button with live badge count) */}
-          <div className="flex items-center shrink-0">
+          {/* Zone 3: Client Account access + Shopping Cart */}
+          <div className="flex items-center gap-3 shrink-0">
+            <button
+              type="button"
+              onClick={() => setIsClientAuthModalOpen(true)}
+              aria-label="Cuenta de cliente e inicio de sesión"
+              className="hidden sm:flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-800 transition-colors shadow-2xs"
+            >
+              <User className="w-3.5 h-3.5 text-emerald-700" />
+              <span className="truncate max-w-[110px]">
+                {currentClient ? currentClient.name.split(' ')[0] : 'Iniciar Sesión'}
+              </span>
+            </button>
+
             <button
               type="button"
               onClick={() => setIsCartOpen(true)}
@@ -421,7 +644,7 @@ export default function App() {
         </div>
       </header>
 
-      {/* Sub-header Workspace Bar: Quick View Switcher (Vista Cliente / Panel Administrador) + Auth status */}
+      {/* Sub-header Workspace Bar */}
       <div className="bg-[#F0FDF4] border-b border-emerald-100/90">
         <div className="max-w-7xl mx-auto px-6 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs">
           <div className="flex items-center gap-2 text-slate-600">
@@ -432,42 +655,60 @@ export default function App() {
             <span>Envío Eco-Térmico gratis desde $90 USD</span>
           </div>
 
-          <div className="flex items-center gap-3">
-            {/* Interactive Mode Switcher requested in prompt */}
-            <div
-              role="group"
-              aria-label="Selector de vista de plataforma"
-              className="flex items-center gap-1 p-1 bg-white rounded-xl border border-emerald-200/80"
-            >
-              <button
-                type="button"
-                onClick={() => setActiveView('client')}
-                className={`px-3 py-1 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 ${
-                  activeView === 'client'
-                    ? 'bg-emerald-600 text-white'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
+          {/* Admin controls: ONLY shown when an administrator is authenticated */}
+          {adminSession ? (
+            <div className="flex items-center gap-3">
+              <div className="hidden sm:flex items-center gap-2 px-2.5 py-1 rounded-xl bg-emerald-100/70 text-emerald-900 text-[11px] font-medium border border-emerald-200">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse" />
+                <span className="truncate max-w-[140px] font-semibold">{adminSession.name}</span>
+                <span className="text-emerald-700 font-normal">({adminSession.role})</span>
+              </div>
+
+              {/* Interactive View Switcher for logged-in Administrator */}
+              <div
+                role="group"
+                aria-label="Selector de vista de plataforma"
+                className="flex items-center gap-1 p-1 bg-white rounded-xl border border-emerald-200/80"
               >
-                Vista Cliente
-              </button>
-              <button
-                type="button"
-                onClick={handleSwitchToAdmin}
-                className={`px-3 py-1 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
-                  activeView === 'admin'
-                    ? 'bg-emerald-600 text-white'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                {adminSession ? (
+                <button
+                  type="button"
+                  onClick={() => setActiveView('client')}
+                  className={`px-3 py-1 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 ${
+                    activeView === 'client'
+                      ? 'bg-emerald-600 text-white'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Vista Cliente
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveView('admin')}
+                  className={`px-3 py-1 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
+                    activeView === 'admin'
+                      ? 'bg-emerald-600 text-white'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
                   <ShieldCheck className="w-3.5 h-3.5" />
-                ) : (
-                  <Lock className="w-3.5 h-3.5" />
-                )}
-                <span>Panel Administrador</span>
+                  <span>Panel Administrador</span>
+                </button>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleAdminLogout}
+                aria-label="Cerrar sesión activa de administrador"
+                className="px-2.5 py-1 text-xs font-medium text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors whitespace-nowrap shrink-0"
+              >
+                Salir (Admin)
               </button>
             </div>
-          </div>
+          ) : (
+            <div className="hidden sm:flex items-center gap-2 text-slate-500 text-[11px]">
+              <span className="text-emerald-800 font-medium">Biotecnología & Nutrición Celular</span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -776,6 +1017,20 @@ export default function App() {
               )}
             </section>
 
+            {/* HEALTH ANALYTICS, BIOMETRICS & DYNAMIC GOALS CHART */}
+            <HealthAnalyticsSection
+              currentClient={currentClient}
+              onOpenProfileModal={() => setIsClientBiometricsModalOpen(true)}
+              products={products}
+              onAddToCart={handleAddToCart}
+              activeSupplementIds={activeSupplementIds}
+              onToggleSupplement={handleToggleSupplement}
+              simulatedCalories={simulatedCalories}
+              onChangeSimulatedCalories={setSimulatedCalories}
+              selectedChartMetric={selectedChartMetric}
+              onSelectChartMetric={setSelectedChartMetric}
+            />
+
             {/* WELLNESS PROJECTION SIMULATOR (Module D) */}
             <WellnessSimulator />
           </>
@@ -818,13 +1073,24 @@ export default function App() {
             >
               Simulador
             </a>
-            <button
-              type="button"
-              onClick={handleSwitchToAdmin}
-              className="hover:text-slate-900 font-medium"
-            >
-              Acceso Administrador
-            </button>
+            {adminSession ? (
+              <button
+                type="button"
+                onClick={handleAdminLogout}
+                className="hover:text-red-600 font-medium text-red-500 text-xs"
+              >
+                Cerrar Sesión Administrador
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleSwitchToAdmin}
+                className="hover:text-slate-700 text-slate-400 text-[11px] transition-colors"
+                title="Acceso exclusivo para personal administrativo"
+              >
+                Portal Administrador
+              </button>
+            )}
           </div>
         </div>
       </footer>
@@ -847,6 +1113,36 @@ export default function App() {
         onLoginSuccess={handleAdminLoginSuccess}
         onRegisterAdmin={handleRegisterAdmin}
         initialMode={authModalMode}
+        currentSession={adminSession}
+      />
+
+      {/* CLIENT AUTHENTICATION MODAL (LOGIN & REGISTER - 100% CLEAN WITHOUT NUTRITIONAL DATA) */}
+      <ClientAuthModal
+        isOpen={isClientAuthModalOpen}
+        onClose={() => setIsClientAuthModalOpen(false)}
+        currentClient={clientSession ? currentClient : null}
+        allClients={clients}
+        onLoginClient={handleLoginClient}
+        onRegisterClient={handleRegisterClient}
+        onLogoutClient={handleLogoutClient}
+      />
+
+      {/* CLIENT BIOMETRICS & HEALTH GOALS MODAL (OPENED STRICTLY FROM THE HEALTH/NUTRITION SECTION) */}
+      <ClientBiometricsModal
+        isOpen={isClientBiometricsModalOpen}
+        onClose={() => setIsClientBiometricsModalOpen(false)}
+        currentClient={currentClient}
+        allClients={clients}
+        onUpdateBiometrics={handleUpdateClientBiometrics}
+        onSelectClient={(c) => {
+          handleLoginClient({
+            userId: c.id,
+            name: c.name,
+            email: c.email,
+            role: 'Cliente',
+            loggedInAt: new Date().toISOString(),
+          });
+        }}
       />
 
       {/* FLOATING NUTRIBOT VIRTUAL ASSISTANT (Module E) */}

@@ -241,14 +241,17 @@ export function generateWellnessProjection(
 
 /**
  * Authenticates an administrator against registered admin users.
+ * Supports email, access code, or admin ID matching, with whitespace resilience.
  */
 export function authenticateAdmin(
   users: AdminUser[],
   emailInput: string,
   passwordInput: string
 ): { ok: true; user: AdminUser } | { ok: false; error: string } {
-  const normalizedEmail = emailInput.trim().toLowerCase();
-  if (!normalizedEmail || !passwordInput) {
+  const normalizedIdentifier = emailInput.trim().toLowerCase();
+  const trimmedPassword = passwordInput ? passwordInput.trim() : '';
+
+  if (!normalizedIdentifier || !trimmedPassword) {
     return {
       ok: false,
       error: 'Por favor ingresa tu correo institucional y contraseña.',
@@ -256,7 +259,10 @@ export function authenticateAdmin(
   }
 
   const matchedUser = users.find(
-    (u) => u.email.toLowerCase() === normalizedEmail
+    (u) =>
+      u.email.toLowerCase() === normalizedIdentifier ||
+      u.id.toLowerCase() === normalizedIdentifier ||
+      u.accessCode.toLowerCase() === normalizedIdentifier
   );
 
   if (!matchedUser) {
@@ -266,7 +272,11 @@ export function authenticateAdmin(
     };
   }
 
-  if (matchedUser.password !== passwordInput) {
+  // Support both exact password and trimmed password to avoid copy-paste whitespace failures
+  if (
+    matchedUser.password !== passwordInput &&
+    matchedUser.password !== trimmedPassword
+  ) {
     return {
       ok: false,
       error: 'Contraseña incorrecta. Verifica tus credenciales de acceso.',

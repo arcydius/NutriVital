@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Plus,
   Trash2,
@@ -98,7 +98,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     [products]
   );
 
-  // Open modal for New Product
+  // Handle Escape key to close product modal
+  useEffect(() => {
+    if (!isProductModalOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsProductModalOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isProductModalOpen]);
   const handleOpenAddModal = () => {
     setEditingProductId(null);
     setFormName('');
@@ -179,7 +189,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         });
       }
     } else {
-      const nextNum = 101 + products.length;
+      const highestNum = products.reduce((max, p) => {
+        const match = p.id.match(/\d+/);
+        return match ? Math.max(max, parseInt(match[0], 10)) : max;
+      }, 100);
+      const nextNum = highestNum + 1;
       const newProduct: Product = {
         id: `NV-${nextNum}`,
         name: trimmedName,
@@ -300,6 +314,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 <span>{session.role}</span>
                 <span aria-hidden="true">·</span>
                 <span className="font-mono">{session.email}</span>
+                <span aria-hidden="true">·</span>
+                <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                  Ingreso: {session.loggedInAt}
+                </span>
               </div>
               <h1 className="text-2xl font-bold text-slate-900 mt-0.5">
                 Panel de Control & Analítica Lineal — {session.name}
@@ -398,7 +416,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 id="ols-regression-heading"
                 className="text-xl md:text-2xl font-bold text-slate-900 mt-0.5"
               >
-                Proyección de Ventas (Modelo Lineal Ordinario)
+                Proyección de Ventas (Modelo Lineal)
               </h2>
               <p className="text-xs text-slate-500 mt-1">
                 Escala estrictamente cartesiana lineal sin transformaciones logarítmicas ni suavizados polinómicos: <strong className="font-mono text-slate-700">y = mx + b</strong>
@@ -410,22 +428,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 <button
                   type="button"
                   onClick={() => setRegressionMetric('revenue')}
-                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap ${
-                    regressionMetric === 'revenue'
-                      ? 'bg-white text-slate-900 shadow-2xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap ${regressionMetric === 'revenue'
+                    ? 'bg-white text-slate-900 shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                    }`}
                 >
                   Ingresos ($ USD)
                 </button>
                 <button
                   type="button"
                   onClick={() => setRegressionMetric('units')}
-                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap ${
-                    regressionMetric === 'units'
-                      ? 'bg-white text-slate-900 shadow-2xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap ${regressionMetric === 'units'
+                    ? 'bg-white text-slate-900 shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                    }`}
                 >
                   Unidades Vendidas
                 </button>
@@ -513,11 +529,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           x={xPos}
                           y={svgH - 16}
                           textAnchor="middle"
-                          className={`text-[10px] font-mono ${
-                            pt.isForecast
-                              ? 'fill-emerald-700 font-semibold'
-                              : 'fill-slate-500'
-                          }`}
+                          className={`text-[10px] font-mono ${pt.isForecast
+                            ? 'fill-emerald-700 font-semibold'
+                            : 'fill-slate-500'
+                            }`}
                         >
                           S{pt.x}
                         </text>
@@ -760,7 +775,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 id="crud-products-heading"
                 className="text-xl md:text-2xl font-bold text-slate-900 mt-0.5"
               >
-                Gestión de Productos (CRUD)
+                Gestión de Productos
               </h2>
             </div>
 
@@ -884,8 +899,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           product.status === 'Activo'
                             ? 'text-emerald-700'
                             : product.status === 'Bajo Stock'
-                            ? 'text-amber-700'
-                            : 'text-red-600'
+                              ? 'text-amber-700'
+                              : 'text-red-600'
                         }
                       >
                         {product.status}
@@ -958,8 +973,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           role="dialog"
           aria-modal="true"
           aria-labelledby="product-modal-title"
+          onClick={() => setIsProductModalOpen(false)}
         >
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-xl max-w-lg w-full overflow-hidden">
+          <div
+            className="bg-white rounded-2xl border border-slate-200 shadow-xl max-w-lg w-full overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="px-6 py-4 bg-[#F0FDF4] border-b border-emerald-100 flex items-center justify-between">
               <h3
                 id="product-modal-title"

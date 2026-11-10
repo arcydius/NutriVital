@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   ShoppingBag,
   X,
@@ -65,6 +65,18 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
     }
   };
 
+  // Close drawer with Escape key
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        handleCloseAll();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen]);
+
   const handleCloseAll = () => {
     setCompletedReceipt(null);
     setCheckoutError(null);
@@ -77,8 +89,12 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
       role="dialog"
       aria-modal="true"
       aria-labelledby="cart-drawer-title"
+      onClick={handleCloseAll}
     >
-      <div className="bg-white w-full max-w-md h-full shadow-2xl border-l border-slate-200 flex flex-col justify-between overflow-hidden">
+      <div
+        className="bg-white w-full max-w-md h-full shadow-2xl border-l border-slate-200 flex flex-col justify-between overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Drawer Header */}
         <div className="px-6 py-5 bg-[#F0FDF4] border-b border-emerald-100 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
@@ -114,7 +130,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                 ¡Gracias por tu compra, {completedReceipt.customerName}!
               </h3>
               <p className="text-xs text-slate-600">
-                El inventario ha sido actualizado y la transacción se registró en las métricas de regresión lineal del Panel Administrador.
+                Tu orden fue procesada con éxito y el paquete eco-térmico se despachará en las próximas 24 horas.
               </p>
             </div>
 

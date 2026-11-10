@@ -9,6 +9,13 @@ import {
   generateWellnessProjection,
 } from './analytics';
 import { AdminUser, Product, SaleRecord } from '../types/nutrivital';
+import {
+  calculateProjectedImpact,
+  generateDynamicBiometricTrend,
+  generateNutritionalRecommendations,
+  getBloodPressureCategory,
+} from './healthAnalytics';
+import { AVAILABLE_SUPPLEMENTS, INITIAL_PRODUCTS } from '../data/seedData';
 
 const sampleProduct: Product = {
   id: 'NV-01',
@@ -112,10 +119,136 @@ test('authenticateAdmin validates credentials and rejects wrong passwords', () =
   );
   assert.equal(valid.ok, true);
 
+  // Password with accidental clipboard trailing space
+  const validWithTrailingSpace = authenticateAdmin(
+    admins,
+    'admin@nutrivital.com',
+    'NutriAdmin2026! '
+  );
+  assert.equal(validWithTrailingSpace.ok, true);
+
+  // Login using admin ID or accessCode
+  const validById = authenticateAdmin(
+    admins,
+    'ADM-01',
+    'NutriAdmin2026!'
+  );
+  assert.equal(validById.ok, true);
+
+  const validByCode = authenticateAdmin(
+    admins,
+    'NV-2026',
+    'NutriAdmin2026!'
+  );
+  assert.equal(validByCode.ok, true);
+
   const invalidPass = authenticateAdmin(
     admins,
     'admin@nutrivital.com',
     'wrong-pass'
   );
   assert.equal(invalidPass.ok, false);
+
+  const emptyPass = authenticateAdmin(
+    admins,
+    'admin@nutrivital.com',
+    '   '
+  );
+  assert.equal(emptyPass.ok, false);
+});
+
+test('getBloodPressureCategory classifies BP according to ACC/AHA thresholds', () => {
+  assert.equal(getBloodPressureCategory(115, 75), 'Óptima');
+  assert.equal(getBloodPressureCategory(124, 78), 'Normal');
+  assert.equal(getBloodPressureCategory(132, 84), 'Elevada');
+  assert.equal(getBloodPressureCategory(144, 92), 'Hipertensión E1');
+  assert.equal(getBloodPressureCategory(165, 105), 'Hipertensión E2');
+});
+
+test('calculateProjectedImpact calculates blood pressure and weight changes accurately', () => {
+  const bio = {
+    systolicBP: 130,
+    diastolicBP: 85,
+    heartRate: 78,
+    bodyWeight: 80,
+    bodyMass: 26.5,
+    dailyCalories: 2400,
+    lastUpdated: '2026-11-01',
+  };
+  const goals = {
+    targetSystolicBP: 120,
+    targetDiastolicBP: 80,
+    targetHeartRate: 70,
+    targetWeight: 75,
+    targetBodyMass: 24,
+    targetCalories: 2000,
+    timelineWeeks: 8,
+  };
+
+  // Select vasodilating supplements: Omega-3 and Magnesio
+  const supplements = AVAILABLE_SUPPLEMENTS.filter(
+    (s) => s.id === 'SUP-OMEGA3' || s.id === 'SUP-MAGNESIO'
+  );
+
+  const impact = calculateProjectedImpact(bio, goals, supplements, 2000, 8);
+
+  // Pressure should decrease (negative delta)
+  assert.ok(impact.systolicDelta < 0, 'Systolic delta should be negative');
+  assert.ok(impact.diastolicDelta < 0, 'Diastolic delta should be negative');
+  assert.ok(impact.weightDelta < 0, 'Weight delta should be negative due to 400 kcal deficit');
+  assert.equal(impact.trendDirection, 'improving');
+});
+
+test('generateDynamicBiometricTrend generates trajectory points including baseline and final week', () => {
+  const bio = {
+    systolicBP: 128,
+    diastolicBP: 84,
+    heartRate: 76,
+    bodyWeight: 75,
+    bodyMass: 25,
+    dailyCalories: 2200,
+    lastUpdated: '2026-11-01',
+  };
+  const goals = {
+    targetSystolicBP: 118,
+    targetDiastolicBP: 78,
+    targetHeartRate: 70,
+    targetWeight: 70,
+    targetBodyMass: 23,
+    targetCalories: 1950,
+    timelineWeeks: 8,
+  };
+
+  const points = generateDynamicBiometricTrend(bio, goals, [AVAILABLE_SUPPLEMENTS[0]], 2000, 8);
+  assert.ok(points.length >= 5);
+  assert.equal(points[0].week, 0);
+  assert.equal(points[0].systolicBP, 128);
+  assert.equal(points[points.length - 1].week, 8);
+  assert.ok(points[points.length - 1].systolicBP < 128);
+});
+
+test('generateNutritionalRecommendations flags elevated BP and caloric imbalance', () => {
+  const bio = {
+    systolicBP: 136,
+    diastolicBP: 88,
+    heartRate: 84,
+    bodyWeight: 88,
+    bodyMass: 28.6,
+    dailyCalories: 2600,
+    lastUpdated: '2026-11-01',
+  };
+  const goals = {
+    targetSystolicBP: 120,
+    targetDiastolicBP: 80,
+    targetHeartRate: 72,
+    targetWeight: 80,
+    targetBodyMass: 25,
+    targetCalories: 2100,
+    timelineWeeks: 8,
+  };
+
+  const recs = generateNutritionalRecommendations(bio, goals, [], 2600, INITIAL_PRODUCTS);
+  assert.ok(recs.some((r) => r.category === 'presion'), 'Should recommend BP protocol');
+  assert.ok(recs.some((r) => r.category === 'pulsaciones'), 'Should recommend heart rate calming');
+  assert.ok(recs.some((r) => r.category === 'calorias'), 'Should recommend caloric adjustment');
 });

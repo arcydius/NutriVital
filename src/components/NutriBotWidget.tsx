@@ -1,5 +1,13 @@
 import React, { useState } from 'react';
-import { MessageCircle, X, Send, Leaf, ArrowUpRight } from 'lucide-react';
+import {
+  MessageCircle,
+  X,
+  Send,
+  Leaf,
+  ArrowUpRight,
+  ChevronRight,
+  ChevronLeft,
+} from 'lucide-react';
 import { ChatMessage, ProductCategory } from '../types/nutrivital';
 import { NUTRIBOT_QUICK_CHIPS } from '../data/seedData';
 
@@ -11,6 +19,7 @@ export const NutriBotWidget: React.FC<NutriBotWidgetProps> = ({
   onSelectCategory,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
+  const [isFolded, setIsFolded] = useState(false);
   const [inputValue, setInputValue] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
@@ -93,6 +102,24 @@ export const NutriBotWidget: React.FC<NutriBotWidgetProps> = ({
     setInputValue('');
   };
 
+  if (isFolded) {
+    return (
+      <div className="fixed bottom-6 right-0 z-40 transition-all duration-300">
+        <button
+          type="button"
+          onClick={() => setIsFolded(false)}
+          title="Desplegar NutriBot Asesoría"
+          aria-label="Desplegar NutriBot Asesoría"
+          className="flex items-center gap-1.5 pl-2.5 pr-2 py-2.5 rounded-l-2xl bg-emerald-700 hover:bg-emerald-800 text-white shadow-xl border-l-2 border-y-2 border-emerald-500/80 transition-all hover:pr-3.5 group"
+        >
+          <ChevronLeft className="w-4 h-4 text-[#86EFAC] group-hover:-translate-x-0.5 transition-transform" />
+          <MessageCircle className="w-4 h-4 text-[#86EFAC]" />
+          <span className="text-xs font-bold font-mono">NutriBot</span>
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="fixed bottom-5 right-5 z-40">
       {isOpen ? (
@@ -116,14 +143,28 @@ export const NutriBotWidget: React.FC<NutriBotWidgetProps> = ({
                 </p>
               </div>
             </div>
-            <button
-              type="button"
-              onClick={() => setIsOpen(false)}
-              aria-label="Cerrar ventana de NutriBot"
-              className="p-1 rounded-lg text-emerald-100 hover:text-white hover:bg-emerald-600 transition-colors"
-            >
-              <X className="w-4 h-4" />
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsOpen(false);
+                  setIsFolded(true);
+                }}
+                title="Plegar asistente al lateral"
+                aria-label="Plegar asistente al lateral"
+                className="p-1 rounded-lg text-emerald-100 hover:text-white hover:bg-emerald-600 transition-colors"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsOpen(false)}
+                aria-label="Cerrar ventana de NutriBot"
+                className="p-1 rounded-lg text-emerald-100 hover:text-white hover:bg-emerald-600 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
           </div>
 
           {/* Messages */}
@@ -205,20 +246,32 @@ export const NutriBotWidget: React.FC<NutriBotWidgetProps> = ({
           </form>
         </div>
       ) : (
-        <button
-          type="button"
-          onClick={() => setIsOpen(true)}
-          aria-label="Abrir NutriBot Asistente Virtual de Nutrición"
-          className="flex items-center gap-2.5 px-4 py-3 rounded-2xl bg-emerald-700 hover:bg-emerald-800 text-white shadow-lg transition-transform hover:-translate-y-0.5"
-        >
-          <MessageCircle className="w-5 h-5 text-[#86EFAC]" />
-          <span className="text-xs font-semibold whitespace-nowrap">
-            NutriBot Asesoría
-          </span>
-          <span className="px-1.5 py-0.5 text-[10px] font-mono font-bold bg-[#4ADE80] text-slate-950 rounded-md">
-            24/7
-          </span>
-        </button>
+        <div className="flex items-center shadow-lg rounded-2xl group transition-transform hover:-translate-y-0.5">
+          <button
+            type="button"
+            onClick={() => setIsOpen(true)}
+            aria-label="Abrir NutriBot Asistente Virtual de Nutrición"
+            className="flex items-center gap-2.5 pl-4 pr-3 py-3 rounded-l-2xl bg-emerald-700 hover:bg-emerald-800 text-white transition-colors"
+          >
+            <MessageCircle className="w-5 h-5 text-[#86EFAC]" />
+            <span className="text-xs font-semibold whitespace-nowrap">
+              NutriBot Asesoría
+            </span>
+            <span className="px-1.5 py-0.5 text-[10px] font-mono font-bold bg-[#4ADE80] text-slate-950 rounded-md">
+              24/7
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setIsFolded(true)}
+            title="Plegar chatbot al lateral de la pantalla"
+            aria-label="Plegar chatbot al lateral de la pantalla"
+            className="pl-2 pr-2.5 py-3 rounded-r-2xl bg-emerald-800 hover:bg-emerald-900 text-emerald-200 hover:text-white border-l border-emerald-600 transition-colors flex items-center justify-center"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
       )}
     </div>
   );
