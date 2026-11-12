@@ -70,10 +70,10 @@ export interface RegressionPoint {
 }
 
 export interface LinearRegressionResult {
-  slope: number; // m
-  intercept: number; // b
-  rSquared: number; // R^2
-  correlation: number; // r
+  slope: number;
+  intercept: number;
+  rSquared: number;
+  correlation: number;
   equation: string;
   meanX: number;
   meanY: number;
@@ -144,29 +144,61 @@ export interface ChatMessage {
 }
 
 // ==========================================
+// INFORMES MÉDICOS & BIOMARCADORES DE LAB
+// ==========================================
+
+export interface MedicalLabMarkers {
+  fastingGlucose?: number;   // Glucosa en ayunas (mg/dL, normal: 70-99)
+  hba1c?: number;            // Hemoglobina glicosilada (%, normal: <5.7)
+  ldlCholesterol?: number;   // Colesterol LDL (mg/dL, óptimo: <100)
+  hdlCholesterol?: number;   // Colesterol HDL (mg/dL, óptimo: >50)
+  triglycerides?: number;    // Triglicéridos (mg/dL, óptimo: <150)
+  vitaminD?: number;         // 25-OH Vitamina D (ng/mL, óptimo: 30-60)
+  hsCRP?: number;            // Proteína C Reactiva ultrasensible (mg/L, óptimo: <1.0)
+  creatinine?: number;       // Creatinina sérica (mg/dL, normal: 0.6-1.2)
+  potassium?: number;        // Potasio sérico (mEq/L, normal: 3.5-5.1)
+  ferritin?: number;         // Ferritina (ng/mL, normal: 30-300)
+}
+
+export interface MedicalReportRecord {
+  id: string;
+  fileName: string;
+  reportType: 'Analítica Sanguínea' | 'Perfil Lipídico' | 'Chequeo Cardiometabólico' | 'Panel Hormonal & Micronutrientes';
+  reportDate: string;
+  uploadedAt: string;
+  aiClinicalSummary: string;
+  markers: MedicalLabMarkers;
+  flaggedFindings: string[];
+  contraindications: string[]; // Ej. 'Precaución con potasio suplementario', 'Uso de anticoagulantes'
+  detectedSystolicBP?: number;
+  detectedDiastolicBP?: number;
+  detectedHeartRate?: number;
+}
+
+// ==========================================
 // CLIENT BIOMETRICS & NUTRITIONAL AI ENGINE
 // ==========================================
 
 export interface ClientBiometrics {
-  systolicBP: number; // Presión arterial sistólica (mmHg, e.g. 128)
-  diastolicBP: number; // Presión arterial diastólica (mmHg, e.g. 84)
-  heartRate: number; // Pulsaciones o latidos por minuto en reposo (bpm, e.g. 76)
-  bodyWeight: number; // Peso corporal (kg, e.g. 74.5)
-  bodyMass: number; // Masa corporal tratada como métrica independiente (IMC o índice magro, e.g. 24.8)
-  dailyCalories: number; // Ingesta calórica habitual o simulada (kcal/día, e.g. 2200)
-  height?: number; // Estatura o altura (cm, e.g. 170)
-  waistCircumference?: number; // Perímetro o circunferencia de cintura (cm, e.g. 80)
+  systolicBP: number;
+  diastolicBP: number;
+  heartRate: number;
+  bodyWeight: number;
+  bodyMass: number;
+  dailyCalories: number;
+  height?: number;
+  waistCircumference?: number;
   lastUpdated: string;
 }
 
 export interface ClientHealthGoals {
-  targetSystolicBP: number; // Meta sistólica (mmHg, e.g. 118)
-  targetDiastolicBP: number; // Meta diastólica (mmHg, e.g. 78)
-  targetHeartRate: number; // Meta de pulsaciones (bpm, e.g. 70)
-  targetWeight: number; // Meta de peso corporal (kg, e.g. 70.0)
-  targetBodyMass: number; // Meta de masa corporal independiente (e.g. 22.5)
-  targetCalories: number; // Meta de dieta calórica (kcal/día, e.g. 1950)
-  timelineWeeks: number; // Horizonte de proyección (semanas, e.g. 8)
+  targetSystolicBP: number;
+  targetDiastolicBP: number;
+  targetHeartRate: number;
+  targetWeight: number;
+  targetBodyMass: number;
+  targetCalories: number;
+  timelineWeeks: number;
 }
 
 export interface ClientUser {
@@ -178,7 +210,8 @@ export interface ClientUser {
   createdAt: string;
   biometrics: ClientBiometrics;
   goals: ClientHealthGoals;
-  activeSupplements: string[]; // IDs de suplementos activos en su régimen
+  activeSupplements: string[];
+  medicalReports?: MedicalReportRecord[]; // Informes médicos analizados por IA
 }
 
 export interface ClientSession {
@@ -202,17 +235,16 @@ export interface SupplementItem {
   category: SupplementCategory;
   tag: string;
   dailyDose: string;
-  // Coeficientes de impacto fisiológico cuantificable
-  systolicEffect: number; // Variación en mmHg (negativo = reduce presión)
-  diastolicEffect: number; // Variación en mmHg
-  heartRateEffect: number; // Variación en pulsaciones/bpm (negativo = calma / estabiliza)
-  vitalityScoreBonus: number; // Aumento al score de vitalidad general (0..15)
-  weightImpactRateKgPerWeek: number; // Impacto semanal en peso (kg)
-  bodyMassImpact: number; // Impacto en masa corporal independiente
-  caloricBurnBonus?: number; // Aceleración calórica diaria (kcal)
+  systolicEffect: number;
+  diastolicEffect: number;
+  heartRateEffect: number;
+  vitalityScoreBonus: number;
+  weightImpactRateKgPerWeek: number;
+  bodyMassImpact: number;
+  caloricBurnBonus?: number;
   description: string;
   scientificMechanism: string;
-  matchingProductId?: string; // Vinculación con producto del catálogo NutriVital
+  matchingProductId?: string;
 }
 
 export interface BiometricTrendPoint {

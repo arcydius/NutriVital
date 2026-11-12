@@ -11,10 +11,7 @@ import {
   ArrowRight,
   Check,
   Plus,
-  Lock,
-  Heart,
   User,
-  Activity,
 } from 'lucide-react';
 import {
   AdminSession,
@@ -24,6 +21,7 @@ import {
   ClientHealthGoals,
   ClientSession,
   ClientUser,
+  MedicalReportRecord,
   OrderReceipt,
   Product,
   ProductCategory,
@@ -168,12 +166,16 @@ export default function App() {
     return INITIAL_CLIENT_USERS[0].biometrics.dailyCalories || 2200;
   });
   const [selectedChartMetric, setSelectedChartMetric] = useState<ChartMetricView>('presion');
+  const [medicalReports, setMedicalReports] = useState<MedicalReportRecord[]>(() => {
+    return currentClient?.medicalReports || [];
+  });
 
-  // Synchronize simulation defaults when currentClient changes
+  // Synchronize simulation defaults & medical reports when currentClient changes
   useEffect(() => {
     if (currentClient) {
       setActiveSupplementIds(currentClient.activeSupplements || ['SUP-OMEGA3', 'SUP-MAGNESIO']);
       setSimulatedCalories(currentClient.biometrics.dailyCalories || 2200);
+      setMedicalReports(currentClient.medicalReports || []);
     }
   }, [currentClient.id]);
 
@@ -339,11 +341,11 @@ export default function App() {
       return prev.map((rec, idx) =>
         idx === lastIdx
           ? {
-              ...rec,
-              revenue: Number((rec.revenue + summary.total).toFixed(2)),
-              units: rec.units + summary.totalItems,
-              ordersCount: rec.ordersCount + 1,
-            }
+            ...rec,
+            revenue: Number((rec.revenue + summary.total).toFixed(2)),
+            units: rec.units + summary.totalItems,
+            ordersCount: rec.ordersCount + 1,
+          }
           : rec
       );
     });
@@ -446,6 +448,7 @@ export default function App() {
     if (matched) {
       setActiveSupplementIds(matched.activeSupplements || ['SUP-OMEGA3', 'SUP-MAGNESIO']);
       setSimulatedCalories(matched.biometrics.dailyCalories || 2200);
+      setMedicalReports(matched.medicalReports || []);
     }
   };
 
@@ -480,6 +483,55 @@ export default function App() {
       );
       return next;
     });
+  };
+
+  // Medical Reports Handlers (AI Lab & Clinical Document Engine)
+  const handleUploadMedicalReport = (newReport: MedicalReportRecord) => {
+    const updatedReports = [newReport, ...medicalReports];
+    setMedicalReports(updatedReports);
+
+    if (!currentClient) return;
+
+    const updatedBiometrics: ClientBiometrics = {
+      ...currentClient.biometrics,
+      ...(newReport.detectedSystolicBP
+        ? { systolicBP: newReport.detectedSystolicBP }
+        : {}),
+      ...(newReport.detectedDiastolicBP
+        ? { diastolicBP: newReport.detectedDiastolicBP }
+        : {}),
+      ...(newReport.detectedHeartRate
+        ? { heartRate: newReport.detectedHeartRate }
+        : {}),
+      lastUpdated: new Date().toISOString().replace('T', ' ').substring(0, 16),
+    };
+
+    setClients((prev) =>
+      prev.map((c) =>
+        c.id === currentClient.id
+          ? {
+            ...c,
+            biometrics: updatedBiometrics,
+            medicalReports: updatedReports,
+          }
+          : c
+      )
+    );
+  };
+
+  const handleDeleteMedicalReport = (reportId: string) => {
+    const updatedReports = medicalReports.filter((r) => r.id !== reportId);
+    setMedicalReports(updatedReports);
+
+    if (!currentClient) return;
+
+    setClients((prev) =>
+      prev.map((c) =>
+        c.id === currentClient.id
+          ? { ...c, medicalReports: updatedReports }
+          : c
+      )
+    );
   };
 
   // Admin CRUD callbacks
@@ -548,9 +600,8 @@ export default function App() {
                 setActiveView('client');
                 window.scrollTo({ top: 0, behavior: 'smooth' });
               }}
-              className={`hover:text-emerald-700 transition-colors whitespace-nowrap shrink-0 ${
-                activeView === 'client' ? 'text-emerald-700 font-semibold' : ''
-              }`}
+              className={`hover:text-emerald-700 transition-colors whitespace-nowrap shrink-0 ${activeView === 'client' ? 'text-emerald-700 font-semibold' : ''
+                }`}
             >
               Inicio
             </a>
@@ -607,9 +658,8 @@ export default function App() {
                   setActiveView('admin');
                   window.scrollTo({ top: 0, behavior: 'smooth' });
                 }}
-                className={`hover:text-emerald-700 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
-                  activeView === 'admin' ? 'text-emerald-700 font-semibold' : ''
-                }`}
+                className={`hover:text-emerald-700 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${activeView === 'admin' ? 'text-emerald-700 font-semibold' : ''
+                  }`}
               >
                 <ShieldCheck className="w-4 h-4 text-emerald-600" />
                 <span>Panel Administrador</span>
@@ -673,22 +723,20 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => setActiveView('client')}
-                  className={`px-3 py-1 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 ${
-                    activeView === 'client'
+                  className={`px-3 py-1 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 ${activeView === 'client'
                       ? 'bg-emerald-600 text-white'
                       : 'text-slate-600 hover:text-slate-900'
-                  }`}
+                    }`}
                 >
                   Vista Cliente
                 </button>
                 <button
                   type="button"
                   onClick={() => setActiveView('admin')}
-                  className={`px-3 py-1 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
-                    activeView === 'admin'
+                  className={`px-3 py-1 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 ${activeView === 'admin'
                       ? 'bg-emerald-600 text-white'
                       : 'text-slate-600 hover:text-slate-900'
-                  }`}
+                    }`}
                 >
                   <ShieldCheck className="w-3.5 h-3.5" />
                   <span>Panel Administrador</span>
@@ -887,11 +935,10 @@ export default function App() {
                         key={cat}
                         type="button"
                         onClick={() => setSelectedCategory(cat)}
-                        className={`px-3.5 py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap shrink-0 ${
-                          selectedCategory === cat
+                        className={`px-3.5 py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap shrink-0 ${selectedCategory === cat
                             ? 'bg-white text-slate-900 shadow-2xs font-semibold'
                             : 'text-slate-600 hover:text-slate-900'
-                        }`}
+                          }`}
                       >
                         {cat}
                       </button>
@@ -987,13 +1034,12 @@ export default function App() {
                             type="button"
                             disabled={isOutOfStock}
                             onClick={() => handleAddToCart(product)}
-                            className={`px-4 py-2.5 rounded-xl text-xs font-semibold transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
-                              isOutOfStock
+                            className={`px-4 py-2.5 rounded-xl text-xs font-semibold transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 ${isOutOfStock
                                 ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
                                 : isAdded
-                                ? 'bg-emerald-800 text-white'
-                                : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs'
-                            }`}
+                                  ? 'bg-emerald-800 text-white'
+                                  : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs'
+                              }`}
                           >
                             {isOutOfStock ? (
                               <span>Agotado</span>
@@ -1017,7 +1063,7 @@ export default function App() {
               )}
             </section>
 
-            {/* HEALTH ANALYTICS, BIOMETRICS & DYNAMIC GOALS CHART */}
+            {/* HEALTH ANALYTICS, BIOMETRICS, LAB REPORTS & DYNAMIC GOALS CHART */}
             <HealthAnalyticsSection
               currentClient={currentClient}
               onOpenProfileModal={() => setIsClientBiometricsModalOpen(true)}
@@ -1029,6 +1075,9 @@ export default function App() {
               onChangeSimulatedCalories={setSimulatedCalories}
               selectedChartMetric={selectedChartMetric}
               onSelectChartMetric={setSelectedChartMetric}
+              medicalReports={medicalReports}
+              onUploadMedicalReport={handleUploadMedicalReport}
+              onDeleteMedicalReport={handleDeleteMedicalReport}
             />
 
             {/* WELLNESS PROJECTION SIMULATOR (Module D) */}

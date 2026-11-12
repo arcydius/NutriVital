@@ -10,9 +10,11 @@ import {
   Check,
   TrendingDown,
   TrendingUp,
+  FileText,
 } from 'lucide-react';
 import {
   BiometricTrendPoint,
+  MedicalReportRecord,
   NutritionRecommendation,
   ProjectedImpactSummary,
   SupplementItem,
@@ -22,7 +24,11 @@ export type ChartMetricView = 'presion' | 'pulsaciones' | 'peso_masa' | 'vitalid
 
 interface DynamicProgressChartProps {
   trendPoints: BiometricTrendPoint[];
-  impactSummary: ProjectedImpactSummary & { waistDelta?: number; whtr?: number; whtrStatus?: string };
+  impactSummary: ProjectedImpactSummary & {
+    waistDelta?: number;
+    whtr?: number;
+    whtrStatus?: string;
+  };
   selectedMetric: ChartMetricView;
   onSelectMetric: (metric: ChartMetricView) => void;
   timelineWeeks: number;
@@ -34,6 +40,7 @@ interface DynamicProgressChartProps {
   activeSupplementIds?: string[];
   onToggleSupplement?: (suppId: string) => void;
   availableSupplements?: SupplementItem[];
+  medicalReports?: MedicalReportRecord[];
 }
 
 export const DynamicProgressChart: React.FC<DynamicProgressChartProps> = ({
@@ -50,6 +57,7 @@ export const DynamicProgressChart: React.FC<DynamicProgressChartProps> = ({
   activeSupplementIds = [],
   onToggleSupplement,
   availableSupplements = [],
+  medicalReports = [],
 }) => {
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
 
@@ -217,7 +225,10 @@ export const DynamicProgressChart: React.FC<DynamicProgressChartProps> = ({
           (rec.relatedProductId && s.matchingProductId === rec.relatedProductId)
       )
     )
-    .filter((supp, idx, arr): supp is SupplementItem => Boolean(supp) && arr.findIndex((x) => x?.id === supp?.id) === idx)
+    .filter(
+      (supp, idx, arr): supp is SupplementItem =>
+        Boolean(supp) && arr.findIndex((x) => x?.id === supp?.id) === idx
+    )
     .slice(0, 3);
 
   return (
@@ -225,7 +236,7 @@ export const DynamicProgressChart: React.FC<DynamicProgressChartProps> = ({
       {/* Encabezado y Selector de Curvas */}
       <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-3">
         <div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200/80">
               {impactSummary.trendDirection === 'improving' ? (
                 <TrendingDown className="w-3.5 h-3.5" />
@@ -237,6 +248,12 @@ export const DynamicProgressChart: React.FC<DynamicProgressChartProps> = ({
             <span className="text-[11px] font-mono text-slate-500">
               {activeSupplementIds.length} suplementos activos
             </span>
+            {medicalReports.length > 0 && (
+              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-teal-800 bg-teal-50 px-2 py-0.5 rounded-full border border-teal-200">
+                <FileText className="w-3 h-3" />
+                <span>{medicalReports.length} analítica(s)</span>
+              </span>
+            )}
           </div>
           <h3 className="text-lg font-extrabold text-slate-900 tracking-tight mt-1">
             Curva de Evolución Biométrica en Tiempo Real
@@ -273,7 +290,8 @@ export const DynamicProgressChart: React.FC<DynamicProgressChartProps> = ({
               Inicio (Hoy)
             </span>
             <span className="font-mono font-bold text-slate-800 text-sm">
-              {selectedMetric === 'presion' && `${Math.round(initialPoint.systolicBP)}/${Math.round(initialPoint.diastolicBP)} mmHg`}
+              {selectedMetric === 'presion' &&
+                `${Math.round(initialPoint.systolicBP)}/${Math.round(initialPoint.diastolicBP)} mmHg`}
               {selectedMetric === 'pulsaciones' && `${Math.round(initialPoint.heartRate)} lpm`}
               {selectedMetric === 'peso_masa' && `${initialPoint.bodyWeight} kg`}
               {selectedMetric === 'vitalidad' && `${initialPoint.generalHealthScore}/100`}
@@ -285,9 +303,11 @@ export const DynamicProgressChart: React.FC<DynamicProgressChartProps> = ({
               {inspectedPoint.weekLabel} (Simulado)
             </span>
             <span className="font-mono font-extrabold text-emerald-800 text-sm">
-              {selectedMetric === 'presion' && `${Math.round(inspectedPoint.systolicBP)}/${Math.round(inspectedPoint.diastolicBP)} mmHg`}
+              {selectedMetric === 'presion' &&
+                `${Math.round(inspectedPoint.systolicBP)}/${Math.round(inspectedPoint.diastolicBP)} mmHg`}
               {selectedMetric === 'pulsaciones' && `${Math.round(inspectedPoint.heartRate)} lpm`}
-              {selectedMetric === 'peso_masa' && `${inspectedPoint.bodyWeight} kg · IMC ${inspectedPoint.bodyMass}`}
+              {selectedMetric === 'peso_masa' &&
+                `${inspectedPoint.bodyWeight} kg · IMC ${inspectedPoint.bodyMass}`}
               {selectedMetric === 'vitalidad' && `${inspectedPoint.generalHealthScore}/100 pts`}
             </span>
           </div>
@@ -297,7 +317,8 @@ export const DynamicProgressChart: React.FC<DynamicProgressChartProps> = ({
               Meta Clínica
             </span>
             <span className="font-mono font-bold text-slate-900 text-sm">
-              {selectedMetric === 'presion' && `${initialPoint.targetSystolic}/${initialPoint.targetDiastolic} mmHg`}
+              {selectedMetric === 'presion' &&
+                `${initialPoint.targetSystolic}/${initialPoint.targetDiastolic} mmHg`}
               {selectedMetric === 'pulsaciones' && `${initialPoint.targetHeartRate} lpm`}
               {selectedMetric === 'peso_masa' && `${initialPoint.targetWeight} kg`}
               {selectedMetric === 'vitalidad' && `≥ 85/100`}
@@ -465,7 +486,8 @@ export const DynamicProgressChart: React.FC<DynamicProgressChartProps> = ({
                   className={`text-[10px] font-mono font-bold transition-all duration-300 ${isSelected ? 'fill-slate-900' : 'fill-slate-500'
                     }`}
                 >
-                  {selectedMetric === 'presion' && `${Math.round(pt.systolicBP)}/${Math.round(pt.diastolicBP)}`}
+                  {selectedMetric === 'presion' &&
+                    `${Math.round(pt.systolicBP)}/${Math.round(pt.diastolicBP)}`}
                   {selectedMetric === 'pulsaciones' && `${Math.round(pt.heartRate)}`}
                   {selectedMetric === 'peso_masa' && `${pt.bodyWeight}`}
                   {selectedMetric === 'vitalidad' && `${pt.generalHealthScore}`}

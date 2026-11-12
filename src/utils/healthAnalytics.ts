@@ -2,6 +2,7 @@ import {
   BiometricTrendPoint,
   ClientBiometrics,
   ClientHealthGoals,
+  MedicalReportRecord,
   NutritionRecommendation,
   Product,
   ProjectedImpactSummary,
@@ -10,9 +11,6 @@ import {
 
 export type ChartMetricFocus = 'presion' | 'pulsaciones' | 'peso_masa' | 'vitalidad';
 
-/**
- * Categorizes Blood Pressure according to international cardiology guidelines (AHA/ACC).
- */
 export function getBloodPressureCategory(
   systolic: number,
   diastolic: number
@@ -24,26 +22,17 @@ export function getBloodPressureCategory(
   return 'Óptima';
 }
 
-/**
- * Calculates Body Mass Index (BMI = kg / m²).
- */
 export function calculateBMI(weightKg: number, heightCm: number): number {
   if (!heightCm || heightCm <= 0) return 0;
   const heightMeters = heightCm / 100;
   return Number((weightKg / (heightMeters * heightMeters)).toFixed(1));
 }
 
-/**
- * Calculates Waist-to-Height Ratio (WHtR = waist / height).
- */
 export function calculateWHtR(waistCm: number, heightCm: number): number {
   if (!heightCm || heightCm <= 0) return 0;
   return Number((waistCm / heightCm).toFixed(2));
 }
 
-/**
- * Categorizes cardiometabolic risk according to Waist-to-Height Ratio (WHtR).
- */
 export function getWHtRStatus(whtr: number): string {
   if (whtr <= 0) return 'Sin datos';
   if (whtr < 0.40) return 'Bajo peso / Delgado';
@@ -52,10 +41,6 @@ export function getWHtRStatus(whtr: number): string {
   return 'Riesgo Muy Alto (Alta Adiposidad)';
 }
 
-/**
- * Calculates a 0-100 overall Vitality / Health score based on multi-biometric proximity to optimal,
- * incorporating Waist-to-Height Ratio (WHtR) when height and waist are available.
- */
 export function calculateOverallVitalityScore(
   systolic: number,
   diastolic: number,
@@ -90,9 +75,6 @@ export function calculateOverallVitalityScore(
   return Math.min(99, Math.max(20, Math.round(rawScore)));
 }
 
-/**
- * Computes projected impact of active supplements, height, waist circumference and calorie intake on client biometrics.
- */
 export function calculateProjectedImpact(
   biometrics: ClientBiometrics,
   goals: ClientHealthGoals,
@@ -208,9 +190,6 @@ export function calculateProjectedImpact(
   };
 }
 
-/**
- * Generates dynamic week-by-week multi-curve trajectory points from baseline (Week 0) to timelineWeeks.
- */
 export function generateDynamicBiometricTrend(
   biometrics: ClientBiometrics,
   goals: ClientHealthGoals,
@@ -318,17 +297,18 @@ export function generateDynamicBiometricTrend(
 }
 
 /**
- * AI / Predictive Chart Recommendation Engine:
- * Analyzes real curve trajectories (Sem 0 -> Sem N) against client goals and active chart view.
+ * Motor Predictivo de IA:
+ * Cruza las curvas biométricas (Sem 0 -> Sem N) con los Informes Médicos de Laboratorio adjuntos.
  */
 export function generateNutritionalRecommendations(
   biometrics: ClientBiometrics,
   goals: ClientHealthGoals,
   selectedSupplements: SupplementItem[],
   simulatedCalories: number,
-  allProducts: Product[],
+  _allProducts: Product[],
   trendPoints: BiometricTrendPoint[] = [],
-  selectedChartMetric: ChartMetricFocus = 'presion'
+  selectedChartMetric: ChartMetricFocus = 'presion',
+  medicalReports: MedicalReportRecord[] = []
 ): NutritionRecommendation[] {
   const recs: NutritionRecommendation[] = [];
   const activeIds = new Set(selectedSupplements.map((s) => s.id));
@@ -336,7 +316,6 @@ export function generateNutritionalRecommendations(
   const heightCm = biometrics.height || 170;
   const waistCm = biometrics.waistCircumference || 80;
 
-  // Extracción de puntos de la curva real (Inicial vs Final Proyectado)
   const fallbackTrend =
     trendPoints.length > 0
       ? trendPoints
@@ -352,7 +331,90 @@ export function generateNutritionalRecommendations(
   const finalPt = fallbackTrend[fallbackTrend.length - 1];
   const finalWeekLabel = finalPt.weekLabel;
 
-  // 1. Análisis Predictivo de Curva de Presión Arterial
+  // =========================================================================
+  // 0. REGLAS DE LABORATORIO (INFORMES MÉDICOS ADJUNTOS AL PERFIL)
+  // =========================================================================
+  const latestReport = medicalReports.length > 0 ? medicalReports[0] : null;
+  const allContraindications = medicalReports.flatMap((r) => r.contraindications || []);
+  const blockPotassium = allContraindications.some((c) =>
+    c.toLowerCase().includes('potasio')
+  );
+
+  if (latestReport) {
+    const m = latestReport.markers;
+
+    // Alerta de seguridad renal / potasio sérico elevado
+    if (blockPotassium || (m.potassium && m.potassium > 5.0) || (m.creatinine && m.creatinine > 1.3)) {
+      recs.push({
+        id: 'rec-lab-renal-guard',
+        category: 'alerta',
+        urgency: 'alta',
+        title: `Alerta Clínica de Laboratorio: Vigilancia Renal/Potasio (${latestReport.fileName})`,
+        message: `Tu informe médico registra ${m.potassium ? `potasio sérico en ${m.potassium} mEq/L` : ''
+          }${m.potassium && m.creatinine ? ' y ' : ''}${m.creatinine ? `creatinina en ${m.creatinine} mg/dL` : ''
+          }. Se desaconseja el uso de electrolitos con potasio añadido; prioriza hidratación controlada y Omega-3.`,
+        suggestedAction: 'Evitar complejos de potasio y consultar ajuste con nefrólogo',
+        chartMetricTrigger: 'presion',
+        metricEvidence: `Informe ${latestReport.reportDate} · Seguridad Clínica`,
+      });
+    }
+
+    // Dislipidemia / Triglicéridos o LDL elevados -> Priorizar Omega-3 EPA/DHA
+    if ((m.triglycerides && m.triglycerides >= 150) || (m.ldlCholesterol && m.ldlCholesterol >= 130)) {
+      const trigText = m.triglycerides ? `Triglicéridos: ${m.triglycerides} mg/dL` : '';
+      const ldlText = m.ldlCholesterol ? `LDL: ${m.ldlCholesterol} mg/dL` : '';
+      recs.push({
+        id: 'rec-lab-lipids-omega3',
+        category: 'suplemento',
+        urgency: (m.triglycerides && m.triglycerides >= 200) || (m.ldlCholesterol && m.ldlCholesterol >= 160) ? 'alta' : 'media',
+        title: `Modulación Lipídica según Analítica (${[trigText, ldlText].filter(Boolean).join(' · ')})`,
+        message: `Tu informe "${latestReport.fileName}" muestra perfil lipídico elevado. Los ácidos grasos Omega-3 EPA+DHA reducen la síntesis hepática de triglicéridos entre un 15% y 25% y protegen el endotelio vascular.`,
+        suggestedAction: 'Simular Omega-3 Vegano EPA+DHA en tu gráfica cardiovascular',
+        relatedProductId: 'NV-104',
+        relatedSupplementId: 'SUP-OMEGA3',
+        chartMetricTrigger: 'presion',
+        metricEvidence: `Lab (${latestReport.reportDate}): ${[trigText, ldlText].filter(Boolean).join(' · ')}`,
+      });
+    }
+
+    // Resistencia a la insulina / Glucosa basal o HbA1c elevada
+    if ((m.fastingGlucose && m.fastingGlucose >= 100) || (m.hba1c && m.hba1c >= 5.7)) {
+      recs.push({
+        id: 'rec-lab-glucose-control',
+        category: 'calorias',
+        urgency: (m.fastingGlucose && m.fastingGlucose >= 126) || (m.hba1c && m.hba1c >= 6.5) ? 'alta' : 'media',
+        title: `Control Glucémico Postprandial (Glucosa: ${m.fastingGlucose ?? '—'} mg/dL${m.hba1c ? ` · HbA1c: ${m.hba1c}%` : ''})`,
+        message: `El laboratorio indica sensibilidad insulínica reducida. Reemplazar carbohidratos refinados por Proteína Bio-Activa con Matcha y aplicar -200 kcal/día estabiliza la curva glucémica y reduce la grasa visceral.`,
+        suggestedAction: 'Aplicar ajuste de -200 kcal y añadir proteína de bajo índice glucémico',
+        suggestedCalorieDelta: -200,
+        relatedProductId: 'NV-101',
+        relatedSupplementId: 'SUP-PROTEINA_MATCHA',
+        chartMetricTrigger: 'peso_masa',
+        metricEvidence: `Lab (${latestReport.reportDate}): Glucosa ${m.fastingGlucose ?? 'N/D'} mg/dL`,
+      });
+    }
+
+    // Déficit de Vitamina D o Inflamación (PCR-us)
+    if ((m.vitaminD && m.vitaminD < 30) || (m.hsCRP && m.hsCRP >= 2.0)) {
+      recs.push({
+        id: 'rec-lab-vitd-inflammation',
+        category: 'suplemento',
+        urgency: 'media',
+        title: `Soporte Inmunometabólico (${m.vitaminD ? `Vitamina D: ${m.vitaminD} ng/mL` : `PCR-us: ${m.hsCRP} mg/L`})`,
+        message: `Tu informe detecta ${m.vitaminD && m.vitaminD < 30 ? `niveles subóptimos de Vitamina D (${m.vitaminD} ng/mL)` : 'marcadores inflamatorios elevados'
+          }. El Magnesio Bisglicinato actúa como cofactor esencial para activar la Vitamina D y reducir la inflamación celular.`,
+        suggestedAction: 'Activar Magnesio Bisglicinato Quelado en tu protocolo',
+        relatedProductId: 'NV-102',
+        relatedSupplementId: 'SUP-MAGNESIO',
+        chartMetricTrigger: 'vitalidad',
+        metricEvidence: `Lab (${latestReport.reportDate}): ${m.vitaminD ? `Vit D ${m.vitaminD} ng/mL` : `PCR ${m.hsCRP} mg/L`}`,
+      });
+    }
+  }
+
+  // =========================================================================
+  // 1. ANÁLISIS PREDICTIVO DE CURVA DE PRESIÓN ARTERIAL
+  // =========================================================================
   const sysGapToGoal = Number((finalPt.systolicBP - goals.targetSystolicBP).toFixed(1));
   const diaGapToGoal = Number((finalPt.diastolicBP - goals.targetDiastolicBP).toFixed(1));
   const projectedBpCat = getBloodPressureCategory(finalPt.systolicBP, finalPt.diastolicBP);
@@ -363,12 +425,12 @@ export function generateNutritionalRecommendations(
 
     const recommendedSuppId = !hasOmega
       ? 'SUP-OMEGA3'
-      : !hasMagnesium
+      : !hasMagnesium || blockPotassium
         ? 'SUP-MAGNESIO'
         : 'SUP-POTASIO_ELECTRO';
     const recommendedSuppLabel = !hasOmega
       ? 'Omega-3 Vegano EPA+DHA'
-      : !hasMagnesium
+      : !hasMagnesium || blockPotassium
         ? 'Magnesio Bisglicinato Quelado'
         : 'Complejo de Potasio & Electrolitos';
 
@@ -382,7 +444,7 @@ export function generateNutritionalRecommendations(
       relatedProductId: 'NV-104',
       relatedSupplementId: recommendedSuppId,
       chartMetricTrigger: 'presion',
-      metricEvidence: `${Math.round(initialPt.systolicBP)}/${Math.round(initialPt.diastolicBP)} → ${Math.round(finalPt.systolicBP)}/${Math.round(finalPt.diastolicBP)} mmHg (Meta: ${goals.targetSystolicBP}/${goals.targetDiastolicBP})`,
+      metricEvidence: `${Math.round(initialPt.systolicBP)}/${Math.round(initialPt.diastolicBP)} → ${Math.round(finalPt.systolicBP)}/${Math.round(finalPt.diastolicBP)} mmHg`,
     });
   } else {
     recs.push({
@@ -399,7 +461,9 @@ export function generateNutritionalRecommendations(
     });
   }
 
-  // 2. Análisis Predictivo de Curva de Ritmo Cardíaco (Pulsaciones)
+  // =========================================================================
+  // 2. ANÁLISIS PREDICTIVO DE RITMO CARDÍACO
+  // =========================================================================
   const hrGapToGoal = Number((finalPt.heartRate - goals.targetHeartRate).toFixed(1));
   if (hrGapToGoal > 3 || finalPt.heartRate >= 76) {
     const hasAshwa = activeIds.has('SUP-ASHWAGANDHA');
@@ -419,7 +483,9 @@ export function generateNutritionalRecommendations(
     });
   }
 
-  // 3. Análisis Predictivo de Peso, IMC, Cintura (WHtR) y Balance Calórico
+  // =========================================================================
+  // 3. ANÁLISIS DE PESO, IMC, CINTURA (WHtR) Y BALANCE CALÓRICO
+  // =========================================================================
   const weightGapToGoal = Number((finalPt.bodyWeight - goals.targetWeight).toFixed(1));
   const weightCurveChange = Number((finalPt.bodyWeight - initialPt.bodyWeight).toFixed(1));
   const calDeltaVsTarget = simulatedCalories - goals.targetCalories;
@@ -439,21 +505,7 @@ export function generateNutritionalRecommendations(
       relatedProductId: 'NV-101',
       relatedSupplementId: 'SUP-PROTEINA_MATCHA',
       chartMetricTrigger: 'peso_masa',
-      metricEvidence: `${initialPt.bodyWeight} kg → ${finalPt.bodyWeight} kg · IMC ${finalPt.bodyMass} (Meta: ${goals.targetWeight} kg)`,
-    });
-  } else if (calDeltaVsTarget < -400) {
-    recs.push({
-      id: 'rec-curve-aggressive-deficit',
-      category: 'alerta',
-      urgency: 'media',
-      title: `Déficit Calórico Excesivo Detectado (${simulatedCalories} kcal/día)`,
-      message: `El simulador opera ${Math.abs(calDeltaVsTarget)} kcal por debajo de tu meta (${goals.targetCalories} kcal). Aunque el peso baja a ${finalPt.bodyWeight} kg, un recorte tan brusco compromete la masa muscular magra y el score de vitalidad.`,
-      suggestedAction: 'Subir +250 kcal con proteína vegetal germinada para proteger masa magra',
-      suggestedCalorieDelta: 250,
-      relatedProductId: 'NV-101',
-      relatedSupplementId: 'SUP-PROTEINA_MATCHA',
-      chartMetricTrigger: 'peso_masa',
-      metricEvidence: `Déficit actual: ${calDeltaVsTarget} kcal vs Meta (${goals.targetCalories} kcal)`,
+      metricEvidence: `${initialPt.bodyWeight} kg → ${finalPt.bodyWeight} kg · IMC ${finalPt.bodyMass}`,
     });
   } else if (projectedWhtr > 0.50) {
     recs.push({
@@ -482,31 +534,35 @@ export function generateNutritionalRecommendations(
     });
   }
 
-  // 4. Análisis Predictivo del Score de Vitalidad Celular
+  // =========================================================================
+  // 4. SCORE DE VITALIDAD CELULAR
+  // =========================================================================
   const vitalityGain = finalPt.generalHealthScore - initialPt.generalHealthScore;
   if (finalPt.generalHealthScore < 85 || vitalityGain < 8) {
     const needsThermogenic =
       biometrics.bodyWeight > goals.targetWeight &&
       !activeNames.some((n) => n.includes('proteína') || n.includes('matcha'));
 
+    const fallbackSupp = needsThermogenic
+      ? 'SUP-PROTEINA_MATCHA'
+      : blockPotassium
+        ? 'SUP-MAGNESIO'
+        : 'SUP-POTASIO_ELECTRO';
+
     recs.push({
       id: 'rec-curve-vitality-boost',
       category: 'suplemento',
       urgency: 'preventiva',
       title: `Potenciación de Vitalidad Celular (${finalPt.generalHealthScore}/100 en ${finalWeekLabel})`,
-      message: `Tu curva de vitalidad gana ${vitalityGain >= 0 ? `+${vitalityGain}` : vitalityGain} pts hasta alcanzar ${finalPt.generalHealthScore}/100. ${needsThermogenic
-          ? 'Incorporar Proteína Bio-Activa Matcha añade +120 kcal de gasto basal y protege la síntesis mitocondrial.'
-          : 'Activar cofactores antioxidantes y electrolitos maximiza la pendiente de recuperación celular.'
-        }`,
+      message: `Tu curva de vitalidad gana ${vitalityGain >= 0 ? `+${vitalityGain}` : vitalityGain} pts hasta alcanzar ${finalPt.generalHealthScore}/100. Activar cofactores antioxidantes maximiza la pendiente de recuperación celular.`,
       suggestedAction: 'Activar soporte mitocondrial en la simulación',
       relatedProductId: needsThermogenic ? 'NV-101' : 'NV-102',
-      relatedSupplementId: needsThermogenic ? 'SUP-PROTEINA_MATCHA' : 'SUP-POTASIO_ELECTRO',
+      relatedSupplementId: fallbackSupp,
       chartMetricTrigger: 'vitalidad',
-      metricEvidence: `Score: ${initialPt.generalHealthScore}/100 → ${finalPt.generalHealthScore}/100 (${vitalityGain >= 0 ? `+${vitalityGain}` : vitalityGain} pts)`,
+      metricEvidence: `Score: ${initialPt.generalHealthScore}/100 → ${finalPt.generalHealthScore}/100`,
     });
   }
 
-  // Ordenar priorizando la pestaña activa en la gráfica y luego la urgencia clínica
   const urgencyWeight: Record<NutritionRecommendation['urgency'], number> = {
     alta: 4,
     media: 3,

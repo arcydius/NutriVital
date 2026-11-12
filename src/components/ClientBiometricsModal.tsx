@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Activity,
   Heart,
@@ -9,16 +9,22 @@ import {
   Check,
   Flame,
   Zap,
-  Lock,
-  Ruler,
-  AlertTriangle,
+  FileText,
+  Upload,
+  Sparkles,
+  Trash2,
+  ShieldAlert,
+  FlaskConical,
+  Loader2,
 } from 'lucide-react';
 import {
   ClientBiometrics,
   ClientHealthGoals,
   ClientUser,
+  MedicalReportRecord,
 } from '../types/nutrivital';
 import { getBloodPressureCategory } from '../utils/healthAnalytics';
+import { analyzeMedicalReportFile } from '../utils/medicalReportAnalyzer';
 
 interface ClientBiometricsModalProps {
   isOpen: boolean;
@@ -28,7 +34,8 @@ interface ClientBiometricsModalProps {
   onUpdateBiometrics: (
     clientId: string,
     biometrics: ClientBiometrics,
-    goals: ClientHealthGoals
+    goals: ClientHealthGoals,
+    medicalReports?: MedicalReportRecord[]
   ) => void;
   onSelectClient?: (client: ClientUser) => void;
 }
@@ -41,85 +48,40 @@ export const ClientBiometricsModal: React.FC<ClientBiometricsModalProps> = ({
   onUpdateBiometrics,
   onSelectClient,
 }) => {
-  // Biometrics Form State (Permite string vacío '' para evitar el cero inicial al borrar/sombrear)
-  const [systolic, setSystolic] = useState<number | string>(currentClient.biometrics.systolicBP);
-  const [diastolic, setDiastolic] = useState<number | string>(currentClient.biometrics.diastolicBP);
-  const [heartRate, setHeartRate] = useState<number | string>(currentClient.biometrics.heartRate);
-  const [bodyWeight, setBodyWeight] = useState<number | string>(currentClient.biometrics.bodyWeight);
-  const [dailyCalories, setDailyCalories] = useState<number | string>(currentClient.biometrics.dailyCalories);
-  const [height, setHeight] = useState<number | string>(currentClient.biometrics.height || 170);
-  const [waist, setWaist] = useState<number | string>(currentClient.biometrics.waistCircumference || 80);
+  // Biometrics Form State
+  const [systolic, setSystolic] = useState<number>(currentClient.biometrics.systolicBP);
+  const [diastolic, setDiastolic] = useState<number>(currentClient.biometrics.diastolicBP);
+  const [heartRate, setHeartRate] = useState<number>(currentClient.biometrics.heartRate);
+  const [bodyWeight, setBodyWeight] = useState<number>(currentClient.biometrics.bodyWeight);
+  const [bodyMass, setBodyMass] = useState<number>(currentClient.biometrics.bodyMass);
+  const [dailyCalories, setDailyCalories] = useState<number>(currentClient.biometrics.dailyCalories);
+  const [height, setHeight] = useState<number>(currentClient.biometrics.height || 170);
+  const [waist, setWaist] = useState<number>(currentClient.biometrics.waistCircumference || 80);
 
   // Goals Form State
-  const [targetSystolic, setTargetSystolic] = useState<number | string>(currentClient.goals.targetSystolicBP);
-  const [targetDiastolic, setTargetDiastolic] = useState<number | string>(currentClient.goals.targetDiastolicBP);
-  const [targetHeartRate, setTargetHeartRate] = useState<number | string>(currentClient.goals.targetHeartRate);
-  const [targetWeight, setTargetWeight] = useState<number | string>(currentClient.goals.targetWeight);
-  const [targetBodyMass, setTargetBodyMass] = useState<number | string>(currentClient.goals.targetBodyMass);
-  const [targetCalories, setTargetCalories] = useState<number | string>(currentClient.goals.targetCalories);
+  const [targetSystolic, setTargetSystolic] = useState<number>(currentClient.goals.targetSystolicBP);
+  const [targetDiastolic, setTargetDiastolic] = useState<number>(currentClient.goals.targetDiastolicBP);
+  const [targetHeartRate, setTargetHeartRate] = useState<number>(currentClient.goals.targetHeartRate);
+  const [targetWeight, setTargetWeight] = useState<number>(currentClient.goals.targetWeight);
+  const [targetBodyMass, setTargetBodyMass] = useState<number>(currentClient.goals.targetBodyMass);
+  const [targetCalories, setTargetCalories] = useState<number>(currentClient.goals.targetCalories);
   const [timelineWeeks, setTimelineWeeks] = useState<number>(currentClient.goals.timelineWeeks || 8);
+
+  // Medical Reports State
+  const [reports, setReports] = useState<MedicalReportRecord[]>(currentClient.medicalReports || []);
+  const [isAnalyzingReport, setIsAnalyzingReport] = useState<boolean>(false);
+  const [reportError, setReportError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
 
-  // Valores numéricos limpios para cálculos fisiológicos en tiempo real
-  const numWeight = Number(bodyWeight) || 0;
-  const numHeight = Number(height) || 0;
-  const numWaist = Number(waist) || 0;
-  const numSystolic = Number(systolic) || 0;
-  const numDiastolic = Number(diastolic) || 0;
-
-  // 1. Cálculo en tiempo real del IMC Actual (kg/m²)
-  const calculatedBmi =
-    numHeight > 0 && numWeight > 0
-      ? Number((numWeight / ((numHeight / 100) ** 2)).toFixed(1))
-      : 0;
-
-  // 2. Cálculo en tiempo real de la relación Cintura-Estatura (WHtR = cintura / altura)
-  const calculatedWhtr =
-    numHeight > 0 && numWaist > 0 ? Number((numWaist / numHeight).toFixed(2)) : 0;
-
-  // Clasificación diagnóstica de IMC
-  const getBmiCategory = (bmi: number): { label: string; style: string } => {
-    if (bmi <= 0) return { label: 'Sin datos', style: 'bg-slate-100 text-slate-600' };
-    if (bmi < 18.5) return { label: 'Bajo peso', style: 'bg-amber-100 text-amber-900' };
-    if (bmi < 25.0) return { label: 'Peso normal', style: 'bg-emerald-100 text-emerald-900' };
-    if (bmi < 30.0) return { label: 'Sobrepeso', style: 'bg-amber-100 text-amber-900' };
-    return { label: 'Obesidad', style: 'bg-rose-100 text-rose-900' };
-  };
-
-  // Clasificación diagnóstica de Cintura / WHtR en tiempo real
-  const getWhtrCategory = (whtr: number): { label: string; style: string; isHighRisk: boolean } => {
-    if (whtr <= 0) return { label: 'Sin datos', style: 'bg-slate-100 text-slate-600', isHighRisk: false };
-    if (whtr < 0.40) return { label: 'Cintura Delgada', style: 'bg-sky-100 text-sky-900', isHighRisk: false };
-    if (whtr <= 0.50) return { label: 'Cintura Óptima', style: 'bg-emerald-100 text-emerald-900', isHighRisk: false };
-    if (whtr <= 0.60) return { label: 'Riesgo Visceral Elevado', style: 'bg-amber-100 text-amber-900', isHighRisk: true };
-    return { label: 'Riesgo Visceral Muy Alto', style: 'bg-rose-100 text-rose-900', isHighRisk: true };
-  };
-
-  const bmiCategory = getBmiCategory(calculatedBmi);
-  const whtrCategory = getWhtrCategory(calculatedWhtr);
-
-  // Helper para manejar cambios en inputs numéricos evitando el cero inicial
-  const handleInputChange = (
-    e: React.ChangeEvent<HTMLInputElement>,
-    setter: React.Dispatch<React.SetStateAction<number | string>>
-  ) => {
-    const val = e.target.value;
-    if (val === '') {
-      setter('');
-    } else {
-      const parsed = Number(val);
-      setter(isNaN(parsed) ? '' : parsed);
-    }
-  };
-
-  // Synchronize when currentClient or isOpen changes
   useEffect(() => {
     if (currentClient) {
       setSystolic(currentClient.biometrics.systolicBP);
       setDiastolic(currentClient.biometrics.diastolicBP);
       setHeartRate(currentClient.biometrics.heartRate);
       setBodyWeight(currentClient.biometrics.bodyWeight);
+      setBodyMass(currentClient.biometrics.bodyMass);
       setDailyCalories(currentClient.biometrics.dailyCalories);
       setHeight(currentClient.biometrics.height || 170);
       setWaist(currentClient.biometrics.waistCircumference || 80);
@@ -131,23 +93,20 @@ export const ClientBiometricsModal: React.FC<ClientBiometricsModalProps> = ({
       setTargetBodyMass(currentClient.goals.targetBodyMass);
       setTargetCalories(currentClient.goals.targetCalories);
       setTimelineWeeks(currentClient.goals.timelineWeeks || 8);
+
+      setReports(currentClient.medicalReports || []);
+      setReportError(null);
     }
   }, [currentClient, isOpen]);
 
-  // Keyboard navigation & body scroll lock
   useEffect(() => {
     if (!isOpen) return;
-
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        onClose();
-      }
+      if (e.key === 'Escape') onClose();
     };
-
     window.addEventListener('keydown', handleKeyDown);
     const originalOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       document.body.style.overflow = originalOverflow;
@@ -156,39 +115,81 @@ export const ClientBiometricsModal: React.FC<ClientBiometricsModalProps> = ({
 
   if (!isOpen) return null;
 
-  const bpCategory = getBloodPressureCategory(numSystolic, numDiastolic);
+  const bpCategory = getBloodPressureCategory(systolic, diastolic);
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setReportError(null);
+    setIsAnalyzingReport(true);
+    try {
+      const analyzed = await analyzeMedicalReportFile(file);
+      setReports((prev) => [analyzed, ...prev]);
+
+      // Si el informe detecta presión arterial o pulsaciones nuevas, actualizar campos
+      if (analyzed.detectedSystolicBP) setSystolic(analyzed.detectedSystolicBP);
+      if (analyzed.detectedDiastolicBP) setDiastolic(analyzed.detectedDiastolicBP);
+      if (analyzed.detectedHeartRate) setHeartRate(analyzed.detectedHeartRate);
+    } catch (err) {
+      setReportError(err instanceof Error ? err.message : 'Error al procesar el informe médico.');
+    } finally {
+      setIsAnalyzingReport(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleLoadSampleReport = async (sampleType: 'lipidico' | 'renal') => {
+    const dummyName =
+      sampleType === 'lipidico'
+        ? 'Analitica_Lipidica_Glucosa_2026.pdf'
+        : 'Chequeo_Renal_Potasio_2026.pdf';
+    const dummyFile = new File(['demo'], dummyName, { type: 'application/pdf' });
+    setReportError(null);
+    setIsAnalyzingReport(true);
+    try {
+      const analyzed = await analyzeMedicalReportFile(dummyFile);
+      setReports((prev) => [analyzed, ...prev]);
+    } finally {
+      setIsAnalyzingReport(false);
+    }
+  };
+
+  const handleRemoveReport = (reportId: string) => {
+    setReports((prev) => prev.filter((r) => r.id !== reportId));
+  };
 
   const handleSaveBiometrics = (e: React.FormEvent) => {
     e.preventDefault();
 
     const updatedBiometrics: ClientBiometrics = {
-      systolicBP: Number(systolic) || currentClient.biometrics.systolicBP,
-      diastolicBP: Number(diastolic) || currentClient.biometrics.diastolicBP,
-      heartRate: Number(heartRate) || currentClient.biometrics.heartRate,
-      bodyWeight: Number(bodyWeight) || currentClient.biometrics.bodyWeight,
-      bodyMass: calculatedBmi,
-      dailyCalories: Number(dailyCalories) || currentClient.biometrics.dailyCalories,
-      height: Number(height) || currentClient.biometrics.height || 170,
-      waistCircumference: Number(waist) || currentClient.biometrics.waistCircumference || 80,
+      systolicBP: Number(systolic),
+      diastolicBP: Number(diastolic),
+      heartRate: Number(heartRate),
+      bodyWeight: Number(bodyWeight),
+      bodyMass: Number(bodyMass),
+      dailyCalories: Number(dailyCalories),
+      height: Number(height),
+      waistCircumference: Number(waist),
       lastUpdated: new Date().toISOString().replace('T', ' ').substring(0, 16),
     };
 
     const updatedGoals: ClientHealthGoals = {
-      targetSystolicBP: Number(targetSystolic) || currentClient.goals.targetSystolicBP,
-      targetDiastolicBP: Number(targetDiastolic) || currentClient.goals.targetDiastolicBP,
-      targetHeartRate: Number(targetHeartRate) || currentClient.goals.targetHeartRate,
-      targetWeight: Number(targetWeight) || currentClient.goals.targetWeight,
-      targetBodyMass: Number(targetBodyMass) || currentClient.goals.targetBodyMass,
-      targetCalories: Number(targetCalories) || currentClient.goals.targetCalories,
-      timelineWeeks: Number(timelineWeeks) || currentClient.goals.timelineWeeks || 8,
+      targetSystolicBP: Number(targetSystolic),
+      targetDiastolicBP: Number(targetDiastolic),
+      targetHeartRate: Number(targetHeartRate),
+      targetWeight: Number(targetWeight),
+      targetBodyMass: Number(targetBodyMass),
+      targetCalories: Number(targetCalories),
+      timelineWeeks: Number(timelineWeeks),
     };
 
-    onUpdateBiometrics(currentClient.id, updatedBiometrics, updatedGoals);
+    onUpdateBiometrics(currentClient.id, updatedBiometrics, updatedGoals, reports);
     setSaveSuccess(true);
     setTimeout(() => {
       setSaveSuccess(false);
       onClose();
-    }, 900);
+    }, 850);
   };
 
   return (
@@ -210,10 +211,10 @@ export const ClientBiometricsModal: React.FC<ClientBiometricsModalProps> = ({
             </div>
             <div>
               <h2 id="biometrics-modal-title" className="text-lg font-bold">
-                Actualizar Datos Biométricos & Metas
+                Perfil Clínico, Analíticas & Metas
               </h2>
               <p className="text-xs text-emerald-100">
-                Perfil de Salud de {currentClient.name}
+                Expediente de {currentClient.name}
               </p>
             </div>
           </div>
@@ -231,7 +232,7 @@ export const ClientBiometricsModal: React.FC<ClientBiometricsModalProps> = ({
         {/* Form Body */}
         <div className="p-6 overflow-y-auto flex-1 space-y-6">
           <form onSubmit={handleSaveBiometrics} className="space-y-6">
-            {/* Quick Profile Switcher (Demo presets) */}
+            {/* Quick Profile Switcher */}
             <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80">
               <p className="text-xs font-semibold text-slate-700 mb-2 flex items-center gap-1.5">
                 <User className="w-3.5 h-3.5 text-emerald-600" />
@@ -253,7 +254,7 @@ export const ClientBiometricsModal: React.FC<ClientBiometricsModalProps> = ({
                       {c.biometrics.systolicBP}/{c.biometrics.diastolicBP} mmHg · {c.biometrics.heartRate} lpm
                     </div>
                     <div className="text-[10px] text-emerald-700">
-                      {c.biometrics.bodyWeight} kg · Cintura: {c.biometrics.waistCircumference || 80} cm
+                      {c.biometrics.bodyWeight} kg · {(c.medicalReports?.length || 0)} informes
                     </div>
                   </button>
                 ))}
@@ -264,27 +265,21 @@ export const ClientBiometricsModal: React.FC<ClientBiometricsModalProps> = ({
             <div className="flex flex-wrap items-center justify-between gap-3 p-4 rounded-2xl bg-emerald-50/70 border border-emerald-100">
               <div>
                 <span className="text-xs font-medium text-emerald-800">
-                  Diagnóstico Clínico Actual:
+                  Diagnóstico de Presión Arterial:
                 </span>
-                <div className="text-sm font-bold text-slate-900 flex flex-wrap items-center gap-2 mt-1">
-                  <span>PA: {systolic || 0}/{diastolic || 0}</span>
-                  <span className={`text-[11px] px-2 py-0.5 rounded-full font-semibold ${bpCategory === 'Óptima' || bpCategory === 'Normal' ? 'bg-emerald-200 text-emerald-900' : 'bg-amber-100 text-amber-900'
-                    }`}>
+                <div className="text-base font-bold text-slate-900 flex items-center gap-2">
+                  <span>
+                    {systolic} / {diastolic} mmHg
+                  </span>
+                  <span
+                    className={`text-xs px-2.5 py-0.5 rounded-full font-medium ${bpCategory === 'Óptima' || bpCategory === 'Normal'
+                        ? 'bg-emerald-200 text-emerald-900'
+                        : bpCategory === 'Elevada'
+                          ? 'bg-amber-100 text-amber-900'
+                          : 'bg-rose-100 text-rose-900'
+                      }`}
+                  >
                     {bpCategory}
-                  </span>
-
-                  <span className="text-slate-300">·</span>
-
-                  <span>IMC: {calculatedBmi}</span>
-                  <span className={`text-[11px] px-2 py-0.5 rounded-full font-semibold ${bmiCategory.style}`}>
-                    {bmiCategory.label}
-                  </span>
-
-                  <span className="text-slate-300">·</span>
-
-                  <span>Cintura: {waist || 0} cm</span>
-                  <span className={`text-[11px] px-2 py-0.5 rounded-full font-semibold transition-all ${whtrCategory.style}`}>
-                    {whtrCategory.label} ({calculatedWhtr})
                   </span>
                 </div>
               </div>
@@ -296,19 +291,6 @@ export const ClientBiometricsModal: React.FC<ClientBiometricsModalProps> = ({
               </div>
             </div>
 
-            {/* ALERTA CLÍNICA DE CINTURA EN TIEMPO REAL */}
-            {whtrCategory.isHighRisk && (
-              <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 flex items-start gap-3 animate-in fade-in duration-200">
-                <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-                <div className="text-xs text-amber-900 space-y-0.5">
-                  <span className="font-bold">Advertencia por Riesgo Cardiometabólico Visceral:</span>
-                  <p className="text-amber-800 leading-relaxed">
-                    Un perímetro de cintura de <strong>{waist || 0} cm</strong> para una altura de <strong>{height || 0} cm</strong> genera una relación Cintura/Estatura de <strong>{calculatedWhtr}</strong> (umbral óptimo: &le; 0.50). Esto sobrecarga la resistencia vascular periférica.
-                  </p>
-                </div>
-              </div>
-            )}
-
             {/* 1. Datos Biométricos Iniciales */}
             <div>
               <h3 className="text-sm font-bold text-slate-900 mb-3 flex items-center gap-2">
@@ -317,7 +299,6 @@ export const ClientBiometricsModal: React.FC<ClientBiometricsModalProps> = ({
               </h3>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {/* Presión Sistólica */}
                 <div className="p-3.5 rounded-xl border border-slate-200 bg-white space-y-1">
                   <label htmlFor="bio-systolic" className="block text-xs font-semibold text-slate-700">
                     Presión Sistólica (mmHg)
@@ -328,13 +309,12 @@ export const ClientBiometricsModal: React.FC<ClientBiometricsModalProps> = ({
                     min={70}
                     max={220}
                     value={systolic}
-                    onChange={(e) => handleInputChange(e, setSystolic)}
+                    onChange={(e) => setSystolic(Number(e.target.value))}
                     className="w-full px-3 py-1.5 text-sm font-mono font-bold rounded-lg border border-slate-200 focus:outline-none focus:border-emerald-600"
                   />
                   <p className="text-[10px] text-slate-400">Rango normal: 110 - 120 mmHg</p>
                 </div>
 
-                {/* Presión Diastólica */}
                 <div className="p-3.5 rounded-xl border border-slate-200 bg-white space-y-1">
                   <label htmlFor="bio-diastolic" className="block text-xs font-semibold text-slate-700">
                     Presión Diastólica (mmHg)
@@ -345,13 +325,12 @@ export const ClientBiometricsModal: React.FC<ClientBiometricsModalProps> = ({
                     min={40}
                     max={140}
                     value={diastolic}
-                    onChange={(e) => handleInputChange(e, setDiastolic)}
+                    onChange={(e) => setDiastolic(Number(e.target.value))}
                     className="w-full px-3 py-1.5 text-sm font-mono font-bold rounded-lg border border-slate-200 focus:outline-none focus:border-emerald-600"
                   />
                   <p className="text-[10px] text-slate-400">Rango normal: 70 - 80 mmHg</p>
                 </div>
 
-                {/* Frecuencia Cardíaca */}
                 <div className="p-3.5 rounded-xl border border-slate-200 bg-white space-y-1">
                   <label htmlFor="bio-hr" className="block text-xs font-semibold text-slate-700 flex items-center gap-1">
                     <Heart className="w-3.5 h-3.5 text-rose-500" />
@@ -363,13 +342,12 @@ export const ClientBiometricsModal: React.FC<ClientBiometricsModalProps> = ({
                     min={40}
                     max={160}
                     value={heartRate}
-                    onChange={(e) => handleInputChange(e, setHeartRate)}
+                    onChange={(e) => setHeartRate(Number(e.target.value))}
                     className="w-full px-3 py-1.5 text-sm font-mono font-bold rounded-lg border border-slate-200 focus:outline-none focus:border-emerald-600"
                   />
                   <p className="text-[10px] text-slate-400">Reposo óptimo: 60 - 75 lpm</p>
                 </div>
 
-                {/* Peso Corporal */}
                 <div className="p-3.5 rounded-xl border border-slate-200 bg-white space-y-1">
                   <label htmlFor="bio-weight" className="block text-xs font-semibold text-slate-700 flex items-center gap-1">
                     <Scale className="w-3.5 h-3.5 text-emerald-600" />
@@ -382,13 +360,12 @@ export const ClientBiometricsModal: React.FC<ClientBiometricsModalProps> = ({
                     min={30}
                     max={250}
                     value={bodyWeight}
-                    onChange={(e) => handleInputChange(e, setBodyWeight)}
+                    onChange={(e) => setBodyWeight(Number(e.target.value))}
                     className="w-full px-3 py-1.5 text-sm font-mono font-bold rounded-lg border border-slate-200 focus:outline-none focus:border-emerald-600"
                   />
                   <p className="text-[10px] text-slate-400">Peso bruto registrado</p>
                 </div>
 
-                {/* Altura / Estatura */}
                 <div className="p-3.5 rounded-xl border border-slate-200 bg-white space-y-1">
                   <label htmlFor="bio-height" className="block text-xs font-semibold text-slate-700">
                     Altura / Estatura (cm)
@@ -399,22 +376,15 @@ export const ClientBiometricsModal: React.FC<ClientBiometricsModalProps> = ({
                     min={100}
                     max={230}
                     value={height}
-                    onChange={(e) => handleInputChange(e, setHeight)}
+                    onChange={(e) => setHeight(Number(e.target.value))}
                     className="w-full px-3 py-1.5 text-sm font-mono font-bold rounded-lg border border-slate-200 focus:outline-none focus:border-emerald-600"
                   />
-                  <p className="text-[10px] text-slate-400">Factor base para IMC y WHtR</p>
+                  <p className="text-[10px] text-slate-400">Para cálculo exacto de IMC</p>
                 </div>
 
-                {/* Perímetro de Cintura */}
                 <div className="p-3.5 rounded-xl border border-slate-200 bg-white space-y-1">
-                  <label htmlFor="bio-waist" className="block text-xs font-semibold text-slate-700 flex items-center justify-between">
-                    <span className="flex items-center gap-1">
-                      <Ruler className="w-3.5 h-3.5 text-emerald-600" />
-                      <span>Perímetro Cintura (cm)</span>
-                    </span>
-                    <span className={`text-[10px] px-1.5 py-0.2 rounded font-bold ${whtrCategory.style}`}>
-                      {whtrCategory.label}
-                    </span>
+                  <label htmlFor="bio-waist" className="block text-xs font-semibold text-slate-700">
+                    Perímetro de Cintura (cm)
                   </label>
                   <input
                     id="bio-waist"
@@ -422,39 +392,30 @@ export const ClientBiometricsModal: React.FC<ClientBiometricsModalProps> = ({
                     min={50}
                     max={200}
                     value={waist}
-                    onChange={(e) => handleInputChange(e, setWaist)}
+                    onChange={(e) => setWaist(Number(e.target.value))}
                     className="w-full px-3 py-1.5 text-sm font-mono font-bold rounded-lg border border-slate-200 focus:outline-none focus:border-emerald-600"
                   />
-                  <p className="text-[10px] text-slate-500 font-medium">
-                    Relación Cintura/Altura: <span className="font-mono font-bold text-slate-800">{calculatedWhtr}</span>
-                  </p>
+                  <p className="text-[10px] text-slate-400">Indicador de grasa visceral</p>
                 </div>
 
-                {/* IMC Actual (Solo lectura) */}
-                <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/80 space-y-1">
-                  <label htmlFor="bio-bmi-readonly" className="block text-xs font-semibold text-slate-600 flex items-center justify-between">
-                    <span className="flex items-center gap-1">
-                      <Zap className="w-3.5 h-3.5 text-emerald-600" />
-                      <span>IMC Actual (kg/m²)</span>
-                    </span>
-                    <span className="flex items-center gap-1 text-[10px] font-normal text-slate-400">
-                      <Lock className="w-3 h-3 text-slate-400" />
-                      <span>Auto-calculado</span>
-                    </span>
+                <div className="p-3.5 rounded-xl border border-slate-200 bg-white space-y-1">
+                  <label htmlFor="bio-mass" className="block text-xs font-semibold text-slate-700 flex items-center gap-1">
+                    <Zap className="w-3.5 h-3.5 text-amber-500" />
+                    <span>Masa Corporal (%)</span>
                   </label>
                   <input
-                    id="bio-bmi-readonly"
+                    id="bio-mass"
                     type="number"
-                    readOnly
-                    value={calculatedBmi}
-                    className="w-full px-3 py-1.5 text-sm font-mono font-bold rounded-lg border border-slate-200 bg-slate-100 text-slate-700 cursor-not-allowed select-none focus:outline-none"
+                    step="0.1"
+                    min={10}
+                    max={60}
+                    value={bodyMass}
+                    onChange={(e) => setBodyMass(Number(e.target.value))}
+                    className="w-full px-3 py-1.5 text-sm font-mono font-bold rounded-lg border border-slate-200 focus:outline-none focus:border-emerald-600"
                   />
-                  <p className="text-[10px] text-emerald-700 font-medium">
-                    {bmiCategory.label} · Calculado en vivo con Peso y Altura
-                  </p>
+                  <p className="text-[10px] text-slate-400">IMC o masa magra</p>
                 </div>
 
-                {/* Dieta Calórica */}
                 <div className="p-3.5 rounded-xl border border-slate-200 bg-white space-y-1">
                   <label htmlFor="bio-cal" className="block text-xs font-semibold text-slate-700 flex items-center gap-1">
                     <Flame className="w-3.5 h-3.5 text-orange-500" />
@@ -467,7 +428,7 @@ export const ClientBiometricsModal: React.FC<ClientBiometricsModalProps> = ({
                     min={1000}
                     max={5000}
                     value={dailyCalories}
-                    onChange={(e) => handleInputChange(e, setDailyCalories)}
+                    onChange={(e) => setDailyCalories(Number(e.target.value))}
                     className="w-full px-3 py-1.5 text-sm font-mono font-bold rounded-lg border border-slate-200 focus:outline-none focus:border-emerald-600"
                   />
                   <p className="text-[10px] text-slate-400">Ingesta energética base</p>
@@ -493,7 +454,7 @@ export const ClientBiometricsModal: React.FC<ClientBiometricsModalProps> = ({
                     min={90}
                     max={180}
                     value={targetSystolic}
-                    onChange={(e) => handleInputChange(e, setTargetSystolic)}
+                    onChange={(e) => setTargetSystolic(Number(e.target.value))}
                     className="w-full px-3 py-1.5 text-sm font-mono font-bold rounded-lg border border-emerald-200 focus:outline-none focus:border-emerald-600"
                   />
                   <p className="text-[10px] text-emerald-700">Objetivo: &lt;120 mmHg</p>
@@ -509,7 +470,7 @@ export const ClientBiometricsModal: React.FC<ClientBiometricsModalProps> = ({
                     min={50}
                     max={110}
                     value={targetDiastolic}
-                    onChange={(e) => handleInputChange(e, setTargetDiastolic)}
+                    onChange={(e) => setTargetDiastolic(Number(e.target.value))}
                     className="w-full px-3 py-1.5 text-sm font-mono font-bold rounded-lg border border-emerald-200 focus:outline-none focus:border-emerald-600"
                   />
                   <p className="text-[10px] text-emerald-700">Objetivo: &lt;80 mmHg</p>
@@ -525,7 +486,7 @@ export const ClientBiometricsModal: React.FC<ClientBiometricsModalProps> = ({
                     min={50}
                     max={120}
                     value={targetHeartRate}
-                    onChange={(e) => handleInputChange(e, setTargetHeartRate)}
+                    onChange={(e) => setTargetHeartRate(Number(e.target.value))}
                     className="w-full px-3 py-1.5 text-sm font-mono font-bold rounded-lg border border-emerald-200 focus:outline-none focus:border-emerald-600"
                   />
                   <p className="text-[10px] text-emerald-700">Objetivo: 60 - 72 lpm</p>
@@ -542,19 +503,15 @@ export const ClientBiometricsModal: React.FC<ClientBiometricsModalProps> = ({
                     min={40}
                     max={200}
                     value={targetWeight}
-                    onChange={(e) => handleInputChange(e, setTargetWeight)}
+                    onChange={(e) => setTargetWeight(Number(e.target.value))}
                     className="w-full px-3 py-1.5 text-sm font-mono font-bold rounded-lg border border-emerald-200 focus:outline-none focus:border-emerald-600"
                   />
                   <p className="text-[10px] text-emerald-700">Peso objetivo</p>
                 </div>
 
-                {/* IMC META (EDITABLE) */}
-                <div className="p-3.5 rounded-xl border border-emerald-200 bg-emerald-50/50 space-y-1 ring-1 ring-emerald-500/20">
-                  <label htmlFor="goal-m" className="block text-xs font-bold text-emerald-950 flex items-center justify-between">
-                    <span>Meta Masa Corporal / IMC Meta</span>
-                    <span className="text-[10px] text-emerald-700 font-semibold bg-emerald-100 px-1.5 py-0.5 rounded">
-                      Editable
-                    </span>
+                <div className="p-3.5 rounded-xl border border-emerald-100 bg-emerald-50/30 space-y-1">
+                  <label htmlFor="goal-m" className="block text-xs font-semibold text-emerald-900">
+                    Meta Masa Corporal (%)
                   </label>
                   <input
                     id="goal-m"
@@ -563,12 +520,10 @@ export const ClientBiometricsModal: React.FC<ClientBiometricsModalProps> = ({
                     min={15}
                     max={50}
                     value={targetBodyMass}
-                    onChange={(e) => handleInputChange(e, setTargetBodyMass)}
-                    className="w-full px-3 py-1.5 text-sm font-mono font-bold rounded-lg border border-emerald-300 bg-white text-slate-900 focus:outline-none focus:border-emerald-600"
+                    onChange={(e) => setTargetBodyMass(Number(e.target.value))}
+                    className="w-full px-3 py-1.5 text-sm font-mono font-bold rounded-lg border border-emerald-200 focus:outline-none focus:border-emerald-600"
                   />
-                  <p className="text-[10px] text-emerald-800">
-                    Ingresa manualmente tu IMC objetivo (ej. 22.5)
-                  </p>
+                  <p className="text-[10px] text-emerald-700">Composición meta</p>
                 </div>
 
                 <div className="p-3.5 rounded-xl border border-emerald-100 bg-emerald-50/30 space-y-1">
@@ -582,12 +537,171 @@ export const ClientBiometricsModal: React.FC<ClientBiometricsModalProps> = ({
                     min={1200}
                     max={4000}
                     value={targetCalories}
-                    onChange={(e) => handleInputChange(e, setTargetCalories)}
+                    onChange={(e) => setTargetCalories(Number(e.target.value))}
                     className="w-full px-3 py-1.5 text-sm font-mono font-bold rounded-lg border border-emerald-200 focus:outline-none focus:border-emerald-600"
                   />
                   <p className="text-[10px] text-emerald-700">Balance calórico meta</p>
                 </div>
               </div>
+            </div>
+
+            {/* 3. Informes Médicos & Analíticas de Laboratorio (IA) */}
+            <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-br from-slate-50 to-emerald-50/40 border border-emerald-200/80 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                    <FlaskConical className="w-4 h-4 text-emerald-700" />
+                    <span>3. Informes Médicos & Analíticas de Laboratorio (IA)</span>
+                  </h3>
+                  <p className="text-[11px] text-slate-600 mt-0.5">
+                    Adjunta analíticas de sangre, perfil lipídico o chequeos cardiometabólicos (PDF, JPG, PNG o TXT). La IA extraerá biomarcadores y ajustará las sugerencias.
+                  </p>
+                </div>
+
+                <span className="text-[11px] font-mono font-bold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-900">
+                  {reports.length} {reports.length === 1 ? 'informe adjunto' : 'informes adjuntos'}
+                </span>
+              </div>
+
+              {/* Zona de Carga */}
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".pdf,.png,.jpg,.jpeg,.webp,.txt"
+                  onChange={handleFileUpload}
+                  className="hidden"
+                />
+
+                <button
+                  type="button"
+                  disabled={isAnalyzingReport}
+                  onClick={() => fileInputRef.current?.click()}
+                  className="px-4 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 text-white text-xs font-bold shadow-2xs transition-colors flex items-center justify-center gap-2"
+                >
+                  {isAnalyzingReport ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Analizando informe con IA...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="w-4 h-4" />
+                      <span>Subir Informe Médico (PDF / Imagen)</span>
+                    </>
+                  )}
+                </button>
+
+                <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                  <span className="text-slate-500">O probar con:</span>
+                  <button
+                    type="button"
+                    disabled={isAnalyzingReport}
+                    onClick={() => handleLoadSampleReport('lipidico')}
+                    className="px-2.5 py-1.5 rounded-lg bg-white hover:bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold transition-colors"
+                  >
+                    + Analítica Lipídica
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isAnalyzingReport}
+                    onClick={() => handleLoadSampleReport('renal')}
+                    className="px-2.5 py-1.5 rounded-lg bg-white hover:bg-amber-50 text-amber-800 border border-amber-200 font-semibold transition-colors"
+                  >
+                    + Chequeo Renal/Potasio
+                  </button>
+                </div>
+              </div>
+
+              {reportError && (
+                <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 flex items-center gap-2">
+                  <ShieldAlert className="w-4 h-4 shrink-0" />
+                  <span>{reportError}</span>
+                </div>
+              )}
+
+              {/* Lista de Informes Analizados */}
+              {reports.length > 0 && (
+                <div className="space-y-2.5">
+                  {reports.map((rep) => (
+                    <div
+                      key={rep.id}
+                      className="p-3.5 rounded-2xl bg-white border border-slate-200/90 shadow-2xs space-y-2"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center shrink-0">
+                            <FileText className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <div className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                              <span>{rep.fileName}</span>
+                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 font-semibold">
+                                {rep.reportType}
+                              </span>
+                            </div>
+                            <span className="text-[10px] text-slate-400 font-mono">
+                              Fecha: {rep.reportDate} · Procesado {rep.uploadedAt}
+                            </span>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveReport(rep.id)}
+                          title="Eliminar informe"
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+
+                      <p className="text-xs text-slate-700 leading-relaxed bg-slate-50 rounded-xl p-2.5 border border-slate-100">
+                        <Sparkles className="w-3.5 h-3.5 text-emerald-600 inline mr-1" />
+                        {rep.aiClinicalSummary}
+                      </p>
+
+                      {/* Chips de Biomarcadores Detectados */}
+                      <div className="flex flex-wrap gap-1.5 text-[10px] font-mono">
+                        {rep.markers.triglycerides !== undefined && (
+                          <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-900 border border-amber-200">
+                            Triglicéridos: {rep.markers.triglycerides} mg/dL
+                          </span>
+                        )}
+                        {rep.markers.ldlCholesterol !== undefined && (
+                          <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-900 border border-amber-200">
+                            LDL: {rep.markers.ldlCholesterol} mg/dL
+                          </span>
+                        )}
+                        {rep.markers.fastingGlucose !== undefined && (
+                          <span className="px-2 py-0.5 rounded-md bg-sky-50 text-sky-900 border border-sky-200">
+                            Glucosa: {rep.markers.fastingGlucose} mg/dL
+                          </span>
+                        )}
+                        {rep.markers.vitaminD !== undefined && (
+                          <span className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-900 border border-emerald-200">
+                            Vitamina D: {rep.markers.vitaminD} ng/mL
+                          </span>
+                        )}
+                        {rep.markers.potassium !== undefined && (
+                          <span className="px-2 py-0.5 rounded-md bg-rose-50 text-rose-900 border border-rose-200">
+                            Potasio: {rep.markers.potassium} mEq/L
+                          </span>
+                        )}
+                        {rep.markers.creatinine !== undefined && (
+                          <span className="px-2 py-0.5 rounded-md bg-rose-50 text-rose-900 border border-rose-200">
+                            Creatinina: {rep.markers.creatinine} mg/dL
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <p className="text-[10px] text-slate-400">
+                Aviso: El análisis automatizado de documentos es orientativo para nutrición preventiva y no sustituye el diagnóstico de un médico especialista.
+              </p>
             </div>
 
             {/* Horizonte Temporal */}
@@ -622,11 +736,11 @@ export const ClientBiometricsModal: React.FC<ClientBiometricsModalProps> = ({
               {saveSuccess ? (
                 <div className="flex items-center gap-2 text-xs font-semibold text-emerald-700">
                   <Check className="w-4 h-4" />
-                  <span>¡Datos guardados con éxito!</span>
+                  <span>¡Expediente e informes sincronizados con la IA!</span>
                 </div>
               ) : (
                 <span className="text-xs text-slate-400">
-                  Los cambios actualizan de inmediato tus gráficas dinámicas.
+                  Los cambios recalcularán tus gráficas y sugerencias IA al instante.
                 </span>
               )}
 

@@ -1,7 +1,8 @@
 import React, { useMemo } from 'react';
-import { Edit3 } from 'lucide-react';
+import { Edit3, FileText } from 'lucide-react';
 import {
   ClientUser,
+  MedicalReportRecord,
   Product,
 } from '../types/nutrivital';
 import { AVAILABLE_SUPPLEMENTS } from '../data/seedData';
@@ -24,6 +25,9 @@ interface HealthAnalyticsSectionProps {
   onChangeSimulatedCalories: (cal: number) => void;
   selectedChartMetric: ChartMetricView;
   onSelectChartMetric: (m: ChartMetricView) => void;
+  medicalReports: MedicalReportRecord[];
+  onUploadMedicalReport: (report: MedicalReportRecord) => void;
+  onDeleteMedicalReport: (reportId: string) => void;
 }
 
 export const HealthAnalyticsSection: React.FC<HealthAnalyticsSectionProps> = ({
@@ -37,6 +41,9 @@ export const HealthAnalyticsSection: React.FC<HealthAnalyticsSectionProps> = ({
   onChangeSimulatedCalories,
   selectedChartMetric,
   onSelectChartMetric,
+  medicalReports,
+  onUploadMedicalReport,
+  onDeleteMedicalReport,
 }) => {
   const selectedSupplements = useMemo(() => {
     const idSet = new Set(activeSupplementIds);
@@ -53,7 +60,13 @@ export const HealthAnalyticsSection: React.FC<HealthAnalyticsSectionProps> = ({
       simulatedCalories,
       timelineWeeks
     );
-  }, [currentClient.biometrics, currentClient.goals, selectedSupplements, simulatedCalories, timelineWeeks]);
+  }, [
+    currentClient.biometrics,
+    currentClient.goals,
+    selectedSupplements,
+    simulatedCalories,
+    timelineWeeks,
+  ]);
 
   const trendPoints = useMemo(() => {
     return generateDynamicBiometricTrend(
@@ -63,7 +76,13 @@ export const HealthAnalyticsSection: React.FC<HealthAnalyticsSectionProps> = ({
       simulatedCalories,
       timelineWeeks
     );
-  }, [currentClient.biometrics, currentClient.goals, selectedSupplements, simulatedCalories, timelineWeeks]);
+  }, [
+    currentClient.biometrics,
+    currentClient.goals,
+    selectedSupplements,
+    simulatedCalories,
+    timelineWeeks,
+  ]);
 
   const recommendations = useMemo(() => {
     return generateNutritionalRecommendations(
@@ -73,7 +92,8 @@ export const HealthAnalyticsSection: React.FC<HealthAnalyticsSectionProps> = ({
       simulatedCalories,
       products,
       trendPoints,
-      selectedChartMetric
+      selectedChartMetric,
+      medicalReports
     );
   }, [
     currentClient.biometrics,
@@ -83,6 +103,7 @@ export const HealthAnalyticsSection: React.FC<HealthAnalyticsSectionProps> = ({
     products,
     trendPoints,
     selectedChartMetric,
+    medicalReports,
   ]);
 
   const handleApplyCalorieDelta = (delta: number) => {
@@ -100,7 +121,7 @@ export const HealthAnalyticsSection: React.FC<HealthAnalyticsSectionProps> = ({
         <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6">
           <div className="space-y-2 max-w-2xl">
             <p className="text-xs font-semibold text-emerald-700 tracking-wide">
-              Módulo de Salud Personalizada · Motor de Análisis & IA Nutricional
+              Módulo de Salud Personalizada · Motor de Análisis & IA Clínica
             </p>
             <h2
               id="health-analytics-heading"
@@ -109,14 +130,18 @@ export const HealthAnalyticsSection: React.FC<HealthAnalyticsSectionProps> = ({
               Tu Perfil Biométrico & Gráfica de Metas
             </h2>
             <p className="text-sm text-slate-600 leading-relaxed">
-              Simula sugerencias de la IA y observa en tiempo real cómo se transforman tus curvas de presión arterial, ritmo cardíaco y composición corporal.
+              Sube tus analíticas o informes médicos y simula sugerencias de la IA para observar en tiempo real cómo evolucionan tu presión arterial, ritmo cardíaco y composición corporal.
             </p>
           </div>
 
           <div className="bg-white rounded-3xl p-4 sm:p-5 border border-emerald-100 shadow-sm flex flex-wrap items-center justify-between gap-4 shrink-0">
             <div className="flex items-center gap-3">
               <div className="w-11 h-11 rounded-2xl bg-emerald-100/80 flex items-center justify-center text-emerald-800 font-bold text-sm">
-                {currentClient.name.split(' ').map((n) => n[0]).slice(0, 2).join('')}
+                {currentClient.name
+                  .split(' ')
+                  .map((n) => n[0])
+                  .slice(0, 2)
+                  .join('')}
               </div>
               <div>
                 <div className="flex items-center gap-2">
@@ -124,9 +149,19 @@ export const HealthAnalyticsSection: React.FC<HealthAnalyticsSectionProps> = ({
                   <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-semibold">
                     {currentClient.role}
                   </span>
+                  {medicalReports.length > 0 && (
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-teal-100 text-teal-800 font-semibold flex items-center gap-1">
+                      <FileText className="w-3 h-3" />
+                      <span>
+                        {medicalReports.length}{' '}
+                        {medicalReports.length === 1 ? 'informe' : 'informes'}
+                      </span>
+                    </span>
+                  )}
                 </div>
                 <div className="text-xs text-slate-500 font-mono mt-0.5">
-                  {currentClient.biometrics.systolicBP}/{currentClient.biometrics.diastolicBP} mmHg · {currentClient.biometrics.heartRate} lpm · {currentClient.biometrics.bodyWeight} kg
+                  {currentClient.biometrics.systolicBP}/{currentClient.biometrics.diastolicBP} mmHg ·{' '}
+                  {currentClient.biometrics.heartRate} lpm · {currentClient.biometrics.bodyWeight} kg
                 </div>
               </div>
             </div>
@@ -142,7 +177,7 @@ export const HealthAnalyticsSection: React.FC<HealthAnalyticsSectionProps> = ({
           </div>
         </div>
 
-        {/* Vista Dividida en Tiempo Real: Gráfica Fija a la Izquierda + KPIs & IA a la Derecha */}
+        {/* Vista Dividida en Tiempo Real: Gráfica Fija a la Izquierda + Informes IA & KPIs a la Derecha */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
           {/* Columna Izquierda (Sticky): Gráfica Dinámica + Simulador Calórico + Píldoras IA */}
           <div className="lg:col-span-7 lg:sticky lg:top-24">
@@ -160,10 +195,11 @@ export const HealthAnalyticsSection: React.FC<HealthAnalyticsSectionProps> = ({
               activeSupplementIds={activeSupplementIds}
               onToggleSupplement={onToggleSupplement}
               availableSupplements={AVAILABLE_SUPPLEMENTS}
+              medicalReports={medicalReports}
             />
           </div>
 
-          {/* Columna Derecha: KPIs Proyectados & Diagnósticos Predictivos de IA */}
+          {/* Columna Derecha: Gestor de Informes Médicos + KPIs Proyectados + Sugerencias IA */}
           <div className="lg:col-span-5">
             <SupplementAnalysisEngine
               biometrics={currentClient.biometrics}
@@ -181,6 +217,9 @@ export const HealthAnalyticsSection: React.FC<HealthAnalyticsSectionProps> = ({
               trendPoints={trendPoints}
               selectedChartMetric={selectedChartMetric}
               timelineWeeks={timelineWeeks}
+              medicalReports={medicalReports}
+              onUploadMedicalReport={onUploadMedicalReport}
+              onDeleteMedicalReport={onDeleteMedicalReport}
             />
           </div>
         </div>

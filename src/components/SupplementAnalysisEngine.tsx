@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef, useState } from 'react';
 import {
   Activity,
   Heart,
@@ -12,11 +12,17 @@ import {
   TrendingDown,
   TrendingUp,
   LineChart,
+  FileText,
+  Upload,
+  Trash2,
+  AlertTriangle,
+  Loader2,
 } from 'lucide-react';
 import {
   BiometricTrendPoint,
   ClientBiometrics,
   ClientHealthGoals,
+  MedicalReportRecord,
   NutritionRecommendation,
   Product,
   ProjectedImpactSummary,
@@ -28,6 +34,7 @@ import {
   getWHtRStatus,
   ChartMetricFocus,
 } from '../utils/healthAnalytics';
+import { analyzeMedicalReportFile } from '../utils/medicalReportAnalyzer';
 
 interface SupplementAnalysisEngineProps {
   biometrics: ClientBiometrics;
@@ -36,7 +43,11 @@ interface SupplementAnalysisEngineProps {
   onToggleSupplement: (suppId: string) => void;
   simulatedCalories: number;
   onChangeSimulatedCalories: (calories: number) => void;
-  impactSummary: ProjectedImpactSummary & { waistDelta?: number; whtr?: number; whtrStatus?: string };
+  impactSummary: ProjectedImpactSummary & {
+    waistDelta?: number;
+    whtr?: number;
+    whtrStatus?: string;
+  };
   recommendations: NutritionRecommendation[];
   onApplyCalorieDelta: (delta: number) => void;
   onAddToCart?: (product: Product) => void;
@@ -45,6 +56,9 @@ interface SupplementAnalysisEngineProps {
   trendPoints: BiometricTrendPoint[];
   selectedChartMetric: ChartMetricFocus;
   timelineWeeks: number;
+  medicalReports: MedicalReportRecord[];
+  onUploadMedicalReport: (report: MedicalReportRecord) => void;
+  onDeleteMedicalReport: (reportId: string) => void;
 }
 
 export const SupplementAnalysisEngine: React.FC<SupplementAnalysisEngineProps> = ({
@@ -61,7 +75,14 @@ export const SupplementAnalysisEngine: React.FC<SupplementAnalysisEngineProps> =
   trendPoints,
   selectedChartMetric,
   timelineWeeks,
+  medicalReports,
+  onUploadMedicalReport,
+  onDeleteMedicalReport,
 }) => {
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [isAnalyzingReport, setIsAnalyzingReport] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
+
   const activeSet = new Set(activeSupplementIds);
 
   // Datos biométricos proyectados
@@ -147,8 +168,164 @@ export const SupplementAnalysisEngine: React.FC<SupplementAnalysisEngineProps> =
     vitalidad: 'Curva: Vitalidad',
   };
 
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setReportError(null);
+    setIsAnalyzingReport(true);
+    try {
+      const parsedReport = await analyzeMedicalReportFile(file);
+      onUploadMedicalReport(parsedReport);
+    } catch (err) {
+      setReportError(
+        err instanceof Error ? err.message : 'No se pudo analizar el informe médico.'
+      );
+    } finally {
+      setIsAnalyzingReport(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  };
+
   return (
     <div className="space-y-6">
+      {/* 0. MÓDULO DE INFORMES MÉDICOS & ANALÍTICAS DE LABORATORIO */}
+      <div className="bg-white rounded-3xl border border-slate-200/90 p-5 space-y-4 shadow-xs">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-2xl bg-teal-50 border border-teal-200/80 flex items-center justify-center text-teal-700 shrink-0">
+              <FileText className="w-4 h-4" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-slate-900 leading-tight">
+                Informes Médicos & Analíticas
+              </h3>
+              <p className="text-[11px] text-slate-500">
+                La IA extrae biomarcadores (PDF, JPG, PNG, TXT) y ajusta tus alertas.
+              </p>
+            </div>
+          </div>
+
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".pdf,.png,.jpg,.jpeg,.webp,.txt"
+            onChange={handleFileChange}
+            className="hidden"
+          />
+
+          <button
+            type="button"
+            disabled={isAnalyzingReport}
+            onClick={() => fileInputRef.current?.click()}
+            className="px-3 py-1.5 rounded-xl bg-teal-700 hover:bg-teal-800 disabled:opacity-60 text-white text-xs font-bold transition-colors flex items-center gap-1.5 shrink-0 shadow-2xs"
+          >
+            {isAnalyzingReport ? (
+              <>
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                <span>Analizando...</span>
+              </>
+            ) : (
+              <>
+                <Upload className="w-3.5 h-3.5" />
+                <span>Subir Informe</span>
+              </>
+            )}
+          </button>
+        </div>
+
+        {reportError && (
+          <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600" />
+            <span>{reportError}</span>
+          </div>
+        )}
+
+        {medicalReports.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 p-3.5 text-center">
+            <p className="text-xs text-slate-500">
+              Aún no has adjuntado analíticas. Sube un examen de sangre o perfil lipídico para personalizar tus recomendaciones.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-2.5 max-h-60 overflow-y-auto pr-1">
+            {medicalReports.map((report) => (
+              <div
+                key={report.id}
+                className="p-3.5 rounded-2xl bg-slate-50/90 border border-slate-200/80 space-y-2"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-xs font-bold text-slate-900 truncate max-w-[190px]">
+                        {report.fileName}
+                      </span>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-teal-100 text-teal-800 font-semibold">
+                        {report.reportType}
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-slate-400 font-mono mt-0.5">
+                      Fecha: {report.reportDate} · Subido {report.uploadedAt}
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => onDeleteMedicalReport(report.id)}
+                    title="Eliminar informe"
+                    className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                <p className="text-[11px] text-slate-600 leading-relaxed">
+                  {report.aiClinicalSummary}
+                </p>
+
+                {/* Biomarcadores extraídos */}
+                <div className="flex flex-wrap gap-1.5 pt-0.5">
+                  {report.markers.fastingGlucose !== undefined && (
+                    <span className="text-[10px] font-mono bg-white px-2 py-0.5 rounded-md border border-slate-200 text-slate-700">
+                      Glucosa: <strong>{report.markers.fastingGlucose}</strong> mg/dL
+                    </span>
+                  )}
+                  {report.markers.triglycerides !== undefined && (
+                    <span className="text-[10px] font-mono bg-white px-2 py-0.5 rounded-md border border-slate-200 text-slate-700">
+                      Triglicéridos: <strong>{report.markers.triglycerides}</strong> mg/dL
+                    </span>
+                  )}
+                  {report.markers.ldlCholesterol !== undefined && (
+                    <span className="text-[10px] font-mono bg-white px-2 py-0.5 rounded-md border border-slate-200 text-slate-700">
+                      LDL: <strong>{report.markers.ldlCholesterol}</strong> mg/dL
+                    </span>
+                  )}
+                  {report.markers.vitaminD !== undefined && (
+                    <span className="text-[10px] font-mono bg-white px-2 py-0.5 rounded-md border border-slate-200 text-slate-700">
+                      Vit D: <strong>{report.markers.vitaminD}</strong> ng/mL
+                    </span>
+                  )}
+                  {report.markers.potassium !== undefined && (
+                    <span className="text-[10px] font-mono bg-white px-2 py-0.5 rounded-md border border-slate-200 text-slate-700">
+                      Potasio: <strong>{report.markers.potassium}</strong> mEq/L
+                    </span>
+                  )}
+                </div>
+
+                {report.contraindications.length > 0 && (
+                  <div className="text-[11px] font-semibold text-rose-800 bg-rose-50 border border-rose-200 rounded-xl px-2.5 py-1.5 flex items-center gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                    <span>{report.contraindications.join(' · ')}</span>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       {/* 1. TARJETAS DE IMPACTO PROYECTADO EN TIEMPO REAL (2x2 en panel lateral) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
         {/* Presión Arterial */}
@@ -160,9 +337,9 @@ export const SupplementAnalysisEngine: React.FC<SupplementAnalysisEngineProps> =
             </span>
             <span
               className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${impactSummary.bloodPressureCategory === 'Óptima' ||
-                impactSummary.bloodPressureCategory === 'Normal'
-                ? 'bg-emerald-100 text-emerald-800'
-                : 'bg-amber-100 text-amber-800'
+                  impactSummary.bloodPressureCategory === 'Normal'
+                  ? 'bg-emerald-100 text-emerald-800'
+                  : 'bg-amber-100 text-amber-800'
                 }`}
             >
               {impactSummary.bloodPressureCategory}
@@ -175,7 +352,10 @@ export const SupplementAnalysisEngine: React.FC<SupplementAnalysisEngineProps> =
               <span className="text-[11px] font-normal text-slate-400 ml-1">mmHg</span>
             </div>
             <p className="text-[11px] text-slate-500 mt-0.5">
-              Meta: <span className="font-mono font-semibold text-emerald-700">{goals.targetSystolicBP}/{goals.targetDiastolicBP}</span>
+              Meta:{' '}
+              <span className="font-mono font-semibold text-emerald-700">
+                {goals.targetSystolicBP}/{goals.targetDiastolicBP}
+              </span>
             </p>
           </div>
 
@@ -210,7 +390,10 @@ export const SupplementAnalysisEngine: React.FC<SupplementAnalysisEngineProps> =
               <span className="text-[11px] font-normal text-slate-400 ml-1">lpm</span>
             </div>
             <p className="text-[11px] text-slate-500 mt-0.5">
-              Meta: <span className="font-mono font-semibold text-emerald-700">{goals.targetHeartRate} lpm</span>
+              Meta:{' '}
+              <span className="font-mono font-semibold text-emerald-700">
+                {goals.targetHeartRate} lpm
+              </span>
             </p>
           </div>
 
@@ -242,7 +425,8 @@ export const SupplementAnalysisEngine: React.FC<SupplementAnalysisEngineProps> =
           <div className="my-2.5 space-y-1">
             <div className="text-lg font-extrabold text-slate-900 font-mono tracking-tight flex items-baseline justify-between">
               <span>
-                {projectedWeight} <span className="text-[11px] font-normal text-slate-400">kg</span>
+                {projectedWeight}{' '}
+                <span className="text-[11px] font-normal text-slate-400">kg</span>
               </span>
               <span className="text-xs font-bold text-amber-700 font-mono">
                 IMC {projectedBmi}
@@ -291,7 +475,10 @@ export const SupplementAnalysisEngine: React.FC<SupplementAnalysisEngineProps> =
               <span className="text-xs font-normal text-emerald-200 ml-1">/ 100</span>
             </div>
             <p className="text-[11px] text-emerald-100 mt-0.5">
-              {activeSupplementIds.length} {activeSupplementIds.length === 1 ? 'suplemento activo' : 'suplementos activos'}
+              {activeSupplementIds.length}{' '}
+              {activeSupplementIds.length === 1
+                ? 'suplemento activo'
+                : 'suplementos activos'}
             </p>
           </div>
 
@@ -313,10 +500,10 @@ export const SupplementAnalysisEngine: React.FC<SupplementAnalysisEngineProps> =
             </div>
             <div>
               <h3 className="text-base font-bold text-slate-900 tracking-tight leading-snug">
-                Recomendaciones médicas
+                Sugerencias IA en Vivo
               </h3>
               <p className="text-[11px] text-slate-600">
-                Sincronizadas con la gráfica a {timelineWeeks} semanas.
+                Sincronizadas con gráfica e informes a {timelineWeeks} semanas.
               </p>
             </div>
           </div>
@@ -335,8 +522,8 @@ export const SupplementAnalysisEngine: React.FC<SupplementAnalysisEngineProps> =
             </span>
             <span
               className={`text-[10px] font-bold px-2 py-0.5 rounded-lg flex items-center gap-1 ${telemetry.convergesToGoal
-                ? 'bg-emerald-100 text-emerald-800'
-                : 'bg-amber-100 text-amber-800'
+                  ? 'bg-emerald-100 text-emerald-800'
+                  : 'bg-amber-100 text-amber-800'
                 }`}
             >
               {telemetry.convergesToGoal ? (
@@ -429,7 +616,9 @@ export const SupplementAnalysisEngine: React.FC<SupplementAnalysisEngineProps> =
                   <div className="text-[11px] text-slate-600 bg-white/70 rounded-xl px-2.5 py-1.5 border border-slate-200/60">
                     <span className="font-semibold text-emerald-800">Protocolo IA: </span>
                     <span className="font-bold text-slate-900">{matchedSupplement.name}</span>{' '}
-                    <span className="font-mono text-slate-500">({matchedSupplement.dailyDose})</span>
+                    <span className="font-mono text-slate-500">
+                      ({matchedSupplement.dailyDose})
+                    </span>
                   </div>
                 )}
 
@@ -440,8 +629,8 @@ export const SupplementAnalysisEngine: React.FC<SupplementAnalysisEngineProps> =
                       type="button"
                       onClick={() => onToggleSupplement(matchedSupplement.id)}
                       className={`px-3 py-1.5 rounded-xl text-xs font-bold shadow-2xs transition-all flex items-center gap-1.5 ${isSupplementSimulated
-                        ? 'bg-emerald-600 text-white ring-2 ring-emerald-300'
-                        : 'bg-white hover:bg-emerald-50 text-emerald-900 border border-emerald-300'
+                          ? 'bg-emerald-600 text-white ring-2 ring-emerald-300'
+                          : 'bg-white hover:bg-emerald-50 text-emerald-900 border border-emerald-300'
                         }`}
                     >
                       {isSupplementSimulated ? (
