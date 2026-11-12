@@ -4,26 +4,36 @@ import {
   Heart,
   Scale,
   Zap,
+  Flame,
+  RotateCcw,
+  Sparkles,
+  Check,
   TrendingDown,
   TrendingUp,
-  Info,
-  CheckCircle,
-  Flame,
 } from 'lucide-react';
-import { BiometricTrendPoint, ProjectedImpactSummary } from '../types/nutrivital';
+import {
+  BiometricTrendPoint,
+  NutritionRecommendation,
+  ProjectedImpactSummary,
+  SupplementItem,
+} from '../types/nutrivital';
 
 export type ChartMetricView = 'presion' | 'pulsaciones' | 'peso_masa' | 'vitalidad';
 
 interface DynamicProgressChartProps {
   trendPoints: BiometricTrendPoint[];
-  impactSummary: ProjectedImpactSummary;
+  impactSummary: ProjectedImpactSummary & { waistDelta?: number; whtr?: number; whtrStatus?: string };
   selectedMetric: ChartMetricView;
-  onSelectMetric: (m: ChartMetricView) => void;
+  onSelectMetric: (metric: ChartMetricView) => void;
   timelineWeeks: number;
-  simulatedCalories?: number;
-  onChangeSimulatedCalories?: (calories: number) => void;
-  targetCalories?: number;
-  baselineCalories?: number;
+  simulatedCalories: number;
+  onChangeSimulatedCalories: (calories: number) => void;
+  targetCalories: number;
+  baselineCalories: number;
+  recommendations?: NutritionRecommendation[];
+  activeSupplementIds?: string[];
+  onToggleSupplement?: (suppId: string) => void;
+  availableSupplements?: SupplementItem[];
 }
 
 export const DynamicProgressChart: React.FC<DynamicProgressChartProps> = ({
@@ -36,710 +46,559 @@ export const DynamicProgressChart: React.FC<DynamicProgressChartProps> = ({
   onChangeSimulatedCalories,
   targetCalories,
   baselineCalories,
+  recommendations = [],
+  activeSupplementIds = [],
+  onToggleSupplement,
+  availableSupplements = [],
 }) => {
-  const [activePointIndex, setActivePointIndex] = useState<number | null>(null);
+  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
 
-  if (trendPoints.length === 0) return null;
+  const tabs: { id: ChartMetricView; label: string; icon: React.ReactNode }[] = [
+    { id: 'presion', label: 'Presión Arterial', icon: <Activity className="w-3.5 h-3.5" /> },
+    { id: 'pulsaciones', label: 'Pulsaciones', icon: <Heart className="w-3.5 h-3.5" /> },
+    { id: 'peso_masa', label: 'Peso & IMC', icon: <Scale className="w-3.5 h-3.5" /> },
+    { id: 'vitalidad', label: 'Vitalidad', icon: <Zap className="w-3.5 h-3.5" /> },
+  ];
 
-  const currentPoint =
-    activePointIndex !== null && trendPoints[activePointIndex]
-      ? trendPoints[activePointIndex]
-      : trendPoints[trendPoints.length - 1];
+  // Dimensiones del lienzo SVG
+  const width = 680;
+  const height = 270;
+  const padLeft = 48;
+  const padRight = 28;
+  const padTop = 28;
+  const padBottom = 42;
+  const plotW = width - padLeft - padRight;
+  const plotH = height - padTop - padBottom;
 
-  const initialPoint = trendPoints[0];
+  const safePoints = trendPoints.length > 0 ? trendPoints : [];
+  const count = safePoints.length;
 
-  // Dimensiones SVG
-  const chartWidth = 760;
-  const chartHeight = 310;
-  const padLeft = 52;
-  const padRight = 36;
-  const padTop = 32;
-  const padBottom = 48;
-  const innerWidth = chartWidth - padLeft - padRight;
-  const innerHeight = chartHeight - padTop - padBottom;
-
-  const totalPoints = trendPoints.length;
-
-  const getX = (idx: number) => {
-    if (totalPoints <= 1) return padLeft + innerWidth / 2;
-    return padLeft + (idx / (totalPoints - 1)) * innerWidth;
+  const getX = (index: number) => {
+    if (count <= 1) return padLeft + plotW / 2;
+    return padLeft + (index / (count - 1)) * plotW;
   };
 
-  // Rangos de Y dinámicos por métrica
-  let minY = 60;
-  let maxY = 160;
+  // Cálculo de escalas y series según la métrica seleccionada
+  const getChartData = () => {
+    if (safePoints.length === 0) {
+      return {
+        minY: 0,
+        maxY: 100,
+        unit: '',
+        primarySeries: [] as number[],
+        secondarySeries: null as number[] | null,
+        targetValue: 0,
+        primaryLabel: '',
+        secondaryLabel: '',
+        primaryColor: '#059669',
+        secondaryColor: '#0284c7',
+      };
+    }
 
-  if (selectedMetric === 'presion') {
-    const allVals = trendPoints.flatMap((p) => [
-      p.systolicBP,
-      p.diastolicBP,
-      p.targetSystolic,
-      p.targetDiastolic,
-    ]);
-    minY = Math.max(50, Math.floor(Math.min(...allVals) / 10) * 10 - 10);
-    maxY = Math.min(200, Math.ceil(Math.max(...allVals) / 10) * 10 + 10);
-  } else if (selectedMetric === 'pulsaciones') {
-    const allVals = trendPoints.flatMap((p) => [p.heartRate, p.targetHeartRate]);
-    minY = Math.max(45, Math.floor(Math.min(...allVals) / 5) * 5 - 5);
-    maxY = Math.min(130, Math.ceil(Math.max(...allVals) / 5) * 5 + 5);
-  } else if (selectedMetric === 'peso_masa') {
-    const allWeights = trendPoints.flatMap((p) => [p.bodyWeight, p.targetWeight]);
-    minY = Math.floor(Math.min(...allWeights) / 5) * 5 - 5;
-    maxY = Math.ceil(Math.max(...allWeights) / 5) * 5 + 5;
-  } else if (selectedMetric === 'vitalidad') {
-    minY = 30;
-    maxY = 100;
-  }
+    if (selectedMetric === 'presion') {
+      const sys = safePoints.map((p) => p.systolicBP);
+      const dia = safePoints.map((p) => p.diastolicBP);
+      const target = safePoints[0].targetSystolic;
+      const allVals = [...sys, ...dia, target];
+      const minY = Math.floor((Math.min(...allVals) - 8) / 5) * 5;
+      const maxY = Math.ceil((Math.max(...allVals) + 8) / 5) * 5;
 
-  const getY = (val: number, customMin: number = minY, customMax: number = maxY) => {
-    const range = customMax - customMin || 1;
-    const clamped = Math.max(customMin, Math.min(customMax, val));
-    return padTop + innerHeight - ((clamped - customMin) / range) * innerHeight;
+      return {
+        minY,
+        maxY,
+        unit: 'mmHg',
+        primarySeries: sys,
+        secondarySeries: dia,
+        targetValue: target,
+        primaryLabel: 'Sistólica',
+        secondaryLabel: 'Diastólica',
+        primaryColor: '#e11d48',
+        secondaryColor: '#0284c7',
+      };
+    }
+
+    if (selectedMetric === 'pulsaciones') {
+      const hrs = safePoints.map((p) => p.heartRate);
+      const target = safePoints[0].targetHeartRate;
+      const allVals = [...hrs, target];
+      const minY = Math.floor((Math.min(...allVals) - 6) / 5) * 5;
+      const maxY = Math.ceil((Math.max(...allVals) + 6) / 5) * 5;
+
+      return {
+        minY,
+        maxY,
+        unit: 'lpm',
+        primarySeries: hrs,
+        secondarySeries: null,
+        targetValue: target,
+        primaryLabel: 'Ritmo Cardíaco',
+        secondaryLabel: '',
+        primaryColor: '#e11d48',
+        secondaryColor: '',
+      };
+    }
+
+    if (selectedMetric === 'peso_masa') {
+      const weights = safePoints.map((p) => p.bodyWeight);
+      const target = safePoints[0].targetWeight;
+      const allVals = [...weights, target];
+      const minY = Math.floor(Math.min(...allVals) - 2);
+      const maxY = Math.ceil(Math.max(...allVals) + 2);
+
+      return {
+        minY,
+        maxY,
+        unit: 'kg',
+        primarySeries: weights,
+        secondarySeries: null,
+        targetValue: target,
+        primaryLabel: 'Peso Corporal',
+        secondaryLabel: '',
+        primaryColor: '#059669',
+        secondaryColor: '',
+      };
+    }
+
+    const scores = safePoints.map((p) => p.generalHealthScore);
+    return {
+      minY: 20,
+      maxY: 100,
+      unit: 'pts',
+      primarySeries: scores,
+      secondarySeries: null,
+      targetValue: 85,
+      primaryLabel: 'Vitalidad Celular',
+      secondaryLabel: '',
+      primaryColor: '#059669',
+      secondaryColor: '',
+    };
   };
 
-  const buildPath = (values: number[], customMin?: number, customMax?: number) => {
-    return values
-      .map((val, idx) => {
-        const x = getX(idx).toFixed(1);
-        const y = getY(val, customMin, customMax).toFixed(1);
-        return `${idx === 0 ? 'M' : 'L'} ${x} ${y}`;
-      })
+  const chart = getChartData();
+  const rangeY = Math.max(1, chart.maxY - chart.minY);
+
+  const getY = (val: number) => {
+    const ratio = (val - chart.minY) / rangeY;
+    return padTop + plotH - ratio * plotH;
+  };
+
+  const buildPath = (values: number[]) =>
+    values
+      .map((v, i) => `${i === 0 ? 'M' : 'L'} ${getX(i).toFixed(1)} ${getY(v).toFixed(1)}`)
       .join(' ');
-  };
 
-  const buildArea = (values: number[], customMin?: number, customMax?: number) => {
-    if (values.length <= 1) return '';
-    const line = buildPath(values, customMin, customMax);
-    const firstX = getX(0).toFixed(1);
+  const buildAreaPath = (values: number[]) => {
+    if (values.length === 0) return '';
+    const line = buildPath(values);
     const lastX = getX(values.length - 1).toFixed(1);
-    const baselineY = (padTop + innerHeight).toFixed(1);
-    return `${line} L ${lastX} ${baselineY} L ${firstX} ${baselineY} Z`;
+    const firstX = getX(0).toFixed(1);
+    const baseY = (padTop + plotH).toFixed(1);
+    return `${line} L ${lastX} ${baseY} L ${firstX} ${baseY} Z`;
   };
 
-  // Arreglos de valores
-  const systolicValues = trendPoints.map((p) => p.systolicBP);
-  const diastolicValues = trendPoints.map((p) => p.diastolicBP);
-  const hrValues = trendPoints.map((p) => p.heartRate);
-  const weightValues = trendPoints.map((p) => p.bodyWeight);
-  const bodyMassValues = trendPoints.map((p) => p.bodyMass);
-  const vitalityValues = trendPoints.map((p) => p.generalHealthScore);
+  const yTicks = [0, 0.25, 0.5, 0.75, 1].map((t) =>
+    Number((chart.minY + rangeY * t).toFixed(selectedMetric === 'peso_masa' ? 1 : 0))
+  );
 
-  const minMass = Math.floor(Math.min(...trendPoints.flatMap((p) => [p.bodyMass, p.targetBodyMass])) - 2);
-  const maxMass = Math.ceil(Math.max(...trendPoints.flatMap((p) => [p.bodyMass, p.targetBodyMass])) + 2);
+  const activeIdx = hoveredIdx !== null ? hoveredIdx : Math.max(0, safePoints.length - 1);
+  const inspectedPoint = safePoints[activeIdx];
+  const initialPoint = safePoints[0];
+  const finalPoint = safePoints[safePoints.length - 1];
 
-  const isImproving = impactSummary.trendDirection === 'improving';
-  const isDeteriorating = impactSummary.trendDirection === 'deteriorating';
+  const calorieDiffFromTarget = simulatedCalories - targetCalories;
+  const activeSet = new Set(activeSupplementIds);
 
-  const calorieDelta =
-    simulatedCalories !== undefined && baselineCalories !== undefined
-      ? simulatedCalories - baselineCalories
-      : 0;
+  // Suplementos únicos recomendados por la IA para acceso rápido dentro de la gráfica
+  const aiQuickSupplements = recommendations
+    .map((rec) =>
+      availableSupplements.find(
+        (s) =>
+          (rec.relatedSupplementId && s.id === rec.relatedSupplementId) ||
+          (rec.relatedProductId && s.matchingProductId === rec.relatedProductId)
+      )
+    )
+    .filter((supp, idx, arr): supp is SupplementItem => Boolean(supp) && arr.findIndex((x) => x?.id === supp?.id) === idx)
+    .slice(0, 3);
 
   return (
-    <div className="bg-white rounded-3xl border border-emerald-100/90 shadow-sm p-6 space-y-6">
-      {/* Controles Superiores */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-5">
+    <div className="bg-white rounded-3xl border border-slate-200/90 p-5 sm:p-6 shadow-sm space-y-5">
+      {/* Encabezado y Selector de Curvas */}
+      <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
-            <h3 className="text-lg font-bold text-slate-900 tracking-tight">
-              Panel de Gráficas Dinámicas & Metas
-            </h3>
-            <span
-              className={`text-xs px-2.5 py-0.5 rounded-full font-bold flex items-center gap-1 ${isImproving
-                  ? 'bg-emerald-100 text-emerald-800'
-                  : isDeteriorating
-                    ? 'bg-rose-100 text-rose-800'
-                    : 'bg-slate-100 text-slate-700'
-                }`}
-            >
-              {isImproving ? (
-                <>
-                  <TrendingDown className="w-3.5 h-3.5 text-emerald-600" />
-                  <span>En progreso hacia tu meta</span>
-                </>
-              ) : isDeteriorating ? (
-                <>
-                  <TrendingUp className="w-3.5 h-3.5 text-rose-600" />
-                  <span>Atención: Desviación de meta</span>
-                </>
+            <span className="inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200/80">
+              {impactSummary.trendDirection === 'improving' ? (
+                <TrendingDown className="w-3.5 h-3.5" />
               ) : (
-                <span>Comportamiento estable</span>
+                <TrendingUp className="w-3.5 h-3.5" />
               )}
+              <span>Proyección a {timelineWeeks} semanas</span>
+            </span>
+            <span className="text-[11px] font-mono text-slate-500">
+              {activeSupplementIds.length} suplementos activos
             </span>
           </div>
-          <p className="text-xs text-slate-500 mt-1">
-            Reacciona en tiempo real a la ingesta calórica y suplementos seleccionados.
-          </p>
+          <h3 className="text-lg font-extrabold text-slate-900 tracking-tight mt-1">
+            Curva de Evolución Biométrica en Tiempo Real
+          </h3>
         </div>
 
-        {/* Selector de Métricas */}
-        <div
-          role="group"
-          aria-label="Seleccionar métrica de gráfica"
-          className="inline-flex p-1 bg-slate-100 rounded-2xl gap-1 shrink-0 overflow-x-auto"
-        >
-          <button
-            type="button"
-            onClick={() => {
-              onSelectMetric('presion');
-              setActivePointIndex(null);
-            }}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-xl transition-all flex items-center gap-1.5 whitespace-nowrap ${selectedMetric === 'presion'
-                ? 'bg-white text-slate-900 shadow-2xs'
-                : 'text-slate-600 hover:text-slate-900'
-              }`}
-          >
-            <Activity className="w-3.5 h-3.5 text-rose-500" />
-            <span>Presión Arterial</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              onSelectMetric('pulsaciones');
-              setActivePointIndex(null);
-            }}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-xl transition-all flex items-center gap-1.5 whitespace-nowrap ${selectedMetric === 'pulsaciones'
-                ? 'bg-white text-slate-900 shadow-2xs'
-                : 'text-slate-600 hover:text-slate-900'
-              }`}
-          >
-            <Heart className="w-3.5 h-3.5 text-rose-600" />
-            <span>Pulsaciones</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              onSelectMetric('peso_masa');
-              setActivePointIndex(null);
-            }}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-xl transition-all flex items-center gap-1.5 whitespace-nowrap ${selectedMetric === 'peso_masa'
-                ? 'bg-white text-slate-900 shadow-2xs'
-                : 'text-slate-600 hover:text-slate-900'
-              }`}
-          >
-            <Scale className="w-3.5 h-3.5 text-emerald-600" />
-            <span>Peso & Masa Corp.</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              onSelectMetric('vitalidad');
-              setActivePointIndex(null);
-            }}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-xl transition-all flex items-center gap-1.5 whitespace-nowrap ${selectedMetric === 'vitalidad'
-                ? 'bg-white text-slate-900 shadow-2xs'
-                : 'text-slate-600 hover:text-slate-900'
-              }`}
-          >
-            <Zap className="w-3.5 h-3.5 text-amber-500" />
-            <span>Score Vitalidad</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Leyenda e Indicador Semanal */}
-      <div className="flex flex-wrap items-center justify-between gap-4 text-xs">
-        <div className="flex flex-wrap items-center gap-4 text-slate-600 font-medium">
-          {selectedMetric === 'presion' && (
-            <>
-              <span className="flex items-center gap-1.5">
-                <span className="w-3 h-1.5 rounded-full bg-rose-500" />
-                <span>Sistólica ({currentPoint.systolicBP} mmHg)</span>
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="w-3 h-1.5 rounded-full bg-teal-600" />
-                <span>Diastólica ({currentPoint.diastolicBP} mmHg)</span>
-              </span>
-              <span className="flex items-center gap-1.5 text-slate-400">
-                <span className="w-4 border-t-2 border-dashed border-emerald-500" />
-                <span>Meta ({currentPoint.targetSystolic}/{currentPoint.targetDiastolic})</span>
-              </span>
-            </>
-          )}
-
-          {selectedMetric === 'pulsaciones' && (
-            <>
-              <span className="flex items-center gap-1.5">
-                <span className="w-3 h-1.5 rounded-full bg-rose-600" />
-                <span>Frecuencia en Reposo ({currentPoint.heartRate} lpm)</span>
-              </span>
-              <span className="flex items-center gap-1.5 text-slate-400">
-                <span className="w-4 border-t-2 border-dashed border-emerald-500" />
-                <span>Meta Cardíaca ({currentPoint.targetHeartRate} lpm)</span>
-              </span>
-            </>
-          )}
-
-          {selectedMetric === 'peso_masa' && (
-            <>
-              <span className="flex items-center gap-1.5">
-                <span className="w-3 h-1.5 rounded-full bg-emerald-600" />
-                <span>Peso Corporal ({currentPoint.bodyWeight} kg)</span>
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="w-3 h-1.5 rounded-full bg-amber-500" />
-                <span>Masa Corporal Indep. ({currentPoint.bodyMass})</span>
-              </span>
-              <span className="flex items-center gap-1.5 text-slate-400">
-                <span className="w-4 border-t-2 border-dashed border-slate-400" />
-                <span>Metas ({currentPoint.targetWeight} kg / {currentPoint.targetBodyMass})</span>
-              </span>
-            </>
-          )}
-
-          {selectedMetric === 'vitalidad' && (
-            <>
-              <span className="flex items-center gap-1.5">
-                <span className="w-3 h-1.5 rounded-full bg-emerald-600" />
-                <span>Índice Vital ({currentPoint.generalHealthScore}/100)</span>
-              </span>
-              <span className="flex items-center gap-1.5 text-emerald-700">
-                <CheckCircle className="w-3.5 h-3.5" />
-                <span>Progreso: +{currentPoint.generalHealthScore - initialPoint.generalHealthScore} pts</span>
-              </span>
-            </>
-          )}
-        </div>
-
-        <div className="flex items-center gap-2 text-slate-500">
-          <Info className="w-3.5 h-3.5 text-slate-400" />
-          <span>Mostrando: </span>
-          <span className="font-bold text-slate-800 bg-slate-100 px-2 py-0.5 rounded-md font-mono">
-            {currentPoint.weekLabel}
-          </span>
-        </div>
-      </div>
-
-      {/* Canvas SVG */}
-      <div className="w-full overflow-x-auto bg-slate-50/50 rounded-2xl p-2 border border-slate-100">
-        <svg
-          viewBox={`0 0 ${chartWidth} ${chartHeight}`}
-          className="w-full h-auto min-w-[580px] select-none"
-          role="img"
-          aria-label="Gráfica de progreso dinámico y metas de salud"
-        >
-          <defs>
-            <linearGradient id="roseGradient" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#F43F5E" stopOpacity="0.25" />
-              <stop offset="100%" stopColor="#F43F5E" stopOpacity="0.0" />
-            </linearGradient>
-            <linearGradient id="emeraldGradient" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#059669" stopOpacity="0.25" />
-              <stop offset="100%" stopColor="#059669" stopOpacity="0.0" />
-            </linearGradient>
-            <linearGradient id="tealGradient" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#0D9488" stopOpacity="0.2" />
-              <stop offset="100%" stopColor="#0D9488" stopOpacity="0.0" />
-            </linearGradient>
-          </defs>
-
-          {/* Grilla horizontal */}
-          {[0, 0.25, 0.5, 0.75, 1].map((pct, i) => {
-            const y = padTop + innerHeight * pct;
-            const val = Math.round(maxY - pct * (maxY - minY));
+        {/* Pestañas de Métricas */}
+        <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-2xl overflow-x-auto">
+          {tabs.map((tab) => {
+            const active = selectedMetric === tab.id;
             return (
-              <g key={i}>
-                <line
-                  x1={padLeft}
-                  y1={y}
-                  x2={chartWidth - padRight}
-                  y2={y}
-                  stroke="#E2E8F0"
-                  strokeDasharray="3 3"
-                  strokeWidth="1"
-                />
-                <text
-                  x={padLeft - 10}
-                  y={y + 4}
-                  textAnchor="end"
-                  className="text-[10px] fill-slate-400 font-mono"
-                >
-                  {val}
-                </text>
-              </g>
-            );
-          })}
-
-          {/* Etiquetas Eje X */}
-          {trendPoints.map((pt, idx) => {
-            const x = getX(idx);
-            return (
-              <g key={idx}>
-                <line
-                  x1={x}
-                  y1={padTop}
-                  x2={x}
-                  y2={padTop + innerHeight}
-                  stroke="#F1F5F9"
-                  strokeWidth="1"
-                />
-                <text
-                  x={x}
-                  y={padTop + innerHeight + 20}
-                  textAnchor="middle"
-                  className={`text-[10px] font-mono cursor-pointer transition-colors ${activePointIndex === idx ? 'fill-emerald-800 font-bold' : 'fill-slate-500'
-                    }`}
-                  onClick={() => setActivePointIndex(idx)}
-                >
-                  {pt.week === 0 ? 'Inicial' : `Sem ${pt.week}`}
-                </text>
-              </g>
-            );
-          })}
-
-          {/* Curvas según métrica */}
-          {selectedMetric === 'presion' && (
-            <>
-              <line
-                x1={padLeft}
-                y1={getY(currentPoint.targetSystolic)}
-                x2={chartWidth - padRight}
-                y2={getY(currentPoint.targetSystolic)}
-                stroke="#10B981"
-                strokeDasharray="5 4"
-                strokeWidth="1.5"
-                opacity="0.8"
-              />
-              <line
-                x1={padLeft}
-                y1={getY(currentPoint.targetDiastolic)}
-                x2={chartWidth - padRight}
-                y2={getY(currentPoint.targetDiastolic)}
-                stroke="#0D9488"
-                strokeDasharray="5 4"
-                strokeWidth="1.5"
-                opacity="0.8"
-              />
-              <path d={buildArea(systolicValues)} fill="url(#roseGradient)" />
-              <path
-                d={buildPath(systolicValues)}
-                fill="none"
-                stroke="#F43F5E"
-                strokeWidth="2.75"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-              <path d={buildArea(diastolicValues)} fill="url(#tealGradient)" />
-              <path
-                d={buildPath(diastolicValues)}
-                fill="none"
-                stroke="#0D9488"
-                strokeWidth="2.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-              {trendPoints.map((p, idx) => {
-                const x = getX(idx);
-                const ySys = getY(p.systolicBP);
-                const yDia = getY(p.diastolicBP);
-                const isSelected = activePointIndex === idx;
-
-                return (
-                  <g key={idx} className="cursor-pointer" onClick={() => setActivePointIndex(idx)}>
-                    <circle
-                      cx={x}
-                      cy={ySys}
-                      r={isSelected ? 6 : 4}
-                      fill="#FFFFFF"
-                      stroke="#F43F5E"
-                      strokeWidth={isSelected ? 3 : 2}
-                    />
-                    <circle
-                      cx={x}
-                      cy={yDia}
-                      r={isSelected ? 6 : 4}
-                      fill="#FFFFFF"
-                      stroke="#0D9488"
-                      strokeWidth={isSelected ? 3 : 2}
-                    />
-                  </g>
-                );
-              })}
-            </>
-          )}
-
-          {selectedMetric === 'pulsaciones' && (
-            <>
-              <line
-                x1={padLeft}
-                y1={getY(currentPoint.targetHeartRate)}
-                x2={chartWidth - padRight}
-                y2={getY(currentPoint.targetHeartRate)}
-                stroke="#10B981"
-                strokeDasharray="5 4"
-                strokeWidth="1.5"
-              />
-              <path d={buildArea(hrValues)} fill="url(#roseGradient)" />
-              <path
-                d={buildPath(hrValues)}
-                fill="none"
-                stroke="#E11D48"
-                strokeWidth="2.75"
-                strokeLinecap="round"
-              />
-              {trendPoints.map((p, idx) => {
-                const x = getX(idx);
-                const y = getY(p.heartRate);
-                const isSelected = activePointIndex === idx;
-                return (
-                  <circle
-                    key={idx}
-                    cx={x}
-                    cy={y}
-                    r={isSelected ? 6 : 4}
-                    fill="#FFFFFF"
-                    stroke="#E11D48"
-                    strokeWidth={isSelected ? 3 : 2}
-                    className="cursor-pointer"
-                    onClick={() => setActivePointIndex(idx)}
-                  />
-                );
-              })}
-            </>
-          )}
-
-          {selectedMetric === 'peso_masa' && (
-            <>
-              <line
-                x1={padLeft}
-                y1={getY(currentPoint.targetWeight)}
-                x2={chartWidth - padRight}
-                y2={getY(currentPoint.targetWeight)}
-                stroke="#059669"
-                strokeDasharray="5 4"
-                strokeWidth="1.5"
-                opacity="0.8"
-              />
-              <path d={buildArea(weightValues)} fill="url(#emeraldGradient)" />
-              <path
-                d={buildPath(weightValues)}
-                fill="none"
-                stroke="#059669"
-                strokeWidth="2.75"
-                strokeLinecap="round"
-              />
-              <path
-                d={buildPath(bodyMassValues, minMass, maxMass)}
-                fill="none"
-                stroke="#F59E0B"
-                strokeWidth="2.5"
-                strokeDasharray="4 2"
-                strokeLinecap="round"
-              />
-              {trendPoints.map((p, idx) => {
-                const x = getX(idx);
-                const yWeight = getY(p.bodyWeight);
-                const yMass = getY(p.bodyMass, minMass, maxMass);
-                const isSelected = activePointIndex === idx;
-                return (
-                  <g key={idx} className="cursor-pointer" onClick={() => setActivePointIndex(idx)}>
-                    <circle
-                      cx={x}
-                      cy={yWeight}
-                      r={isSelected ? 6 : 4}
-                      fill="#FFFFFF"
-                      stroke="#059669"
-                      strokeWidth={isSelected ? 3 : 2}
-                    />
-                    <circle
-                      cx={x}
-                      cy={yMass}
-                      r={isSelected ? 5 : 3.5}
-                      fill="#FFFFFF"
-                      stroke="#F59E0B"
-                      strokeWidth={isSelected ? 3 : 2}
-                    />
-                  </g>
-                );
-              })}
-            </>
-          )}
-
-          {selectedMetric === 'vitalidad' && (
-            <>
-              <path d={buildArea(vitalityValues)} fill="url(#emeraldGradient)" />
-              <path
-                d={buildPath(vitalityValues)}
-                fill="none"
-                stroke="#10B981"
-                strokeWidth="3"
-                strokeLinecap="round"
-              />
-              {trendPoints.map((p, idx) => {
-                const x = getX(idx);
-                const y = getY(p.generalHealthScore);
-                const isSelected = activePointIndex === idx;
-                return (
-                  <circle
-                    key={idx}
-                    cx={x}
-                    cy={y}
-                    r={isSelected ? 7 : 4.5}
-                    fill="#FFFFFF"
-                    stroke="#10B981"
-                    strokeWidth={isSelected ? 3 : 2}
-                    className="cursor-pointer"
-                    onClick={() => setActivePointIndex(idx)}
-                  />
-                );
-              })}
-            </>
-          )}
-        </svg>
-      </div>
-
-      {/* SIMULADOR DE DIETA CALÓRICA DIARIA (DIRECTAMENTE DEBAJO DE LA GRÁFICA SVG) */}
-      {simulatedCalories !== undefined && onChangeSimulatedCalories && (
-        <div className="bg-gradient-to-r from-orange-50/80 via-amber-50/50 to-white rounded-2xl border border-orange-200/80 p-5 space-y-3.5 shadow-2xs">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-xl bg-orange-100 flex items-center justify-center text-orange-600 shrink-0">
-                <Flame className="w-4 h-4" />
-              </div>
-              <div>
-                <h4 className="text-sm font-bold text-slate-900">
-                  Simulador de Dieta Calórica Diaria
-                </h4>
-                <p className="text-[11px] text-slate-500">
-                  Mueve el deslizador y observa cómo se recalculan las curvas en la gráfica superior.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2.5 shrink-0">
-              <span className="text-xl font-extrabold text-slate-900 font-mono tracking-tight">
-                {simulatedCalories}{' '}
-                <span className="text-xs font-normal text-slate-500">kcal/día</span>
-              </span>
-
-              <span
-                className={`text-[11px] px-2.5 py-0.5 rounded-full font-mono font-bold ${calorieDelta < 0
-                    ? 'bg-emerald-100 text-emerald-800'
-                    : calorieDelta > 0
-                      ? 'bg-amber-100 text-amber-800'
-                      : 'bg-slate-100 text-slate-700'
-                  }`}
-              >
-                {calorieDelta < 0
-                  ? `Déficit ${calorieDelta} kcal`
-                  : calorieDelta > 0
-                    ? `Superávit +${calorieDelta} kcal`
-                    : 'Mantenimiento Base'}
-              </span>
-            </div>
-          </div>
-
-          {/* Deslizador del Simulador */}
-          <div className="space-y-1 pt-1">
-            <input
-              type="range"
-              min={1200}
-              max={3800}
-              step={50}
-              value={simulatedCalories}
-              onChange={(e) => onChangeSimulatedCalories(Number(e.target.value))}
-              className="w-full h-2.5 bg-orange-200 rounded-lg appearance-none cursor-pointer accent-orange-600"
-            />
-            <div className="flex justify-between text-[10px] text-slate-400 font-mono">
-              <span>1200 kcal (Mínimo)</span>
-              {targetCalories !== undefined && <span>Meta: {targetCalories} kcal</span>}
-              {baselineCalories !== undefined && <span>Base: {baselineCalories} kcal</span>}
-              <span>3800 kcal (Máximo)</span>
-            </div>
-          </div>
-
-          {/* Botones de Presets Rápidos */}
-          <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-orange-100/80">
-            <span className="text-[11px] font-semibold text-slate-500 mr-1">
-              Ajustes rápidos:
-            </span>
-            {targetCalories !== undefined && (
               <button
+                key={tab.id}
                 type="button"
-                onClick={() => onChangeSimulatedCalories(targetCalories)}
-                className={`px-3 py-1 rounded-lg text-xs font-semibold transition-colors ${simulatedCalories === targetCalories
-                    ? 'bg-emerald-700 text-white'
-                    : 'bg-white hover:bg-emerald-50 text-slate-700 border border-slate-200'
+                onClick={() => onSelectMetric(tab.id)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 whitespace-nowrap ${active
+                    ? 'bg-emerald-700 text-white shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
                   }`}
               >
-                Fijar a Meta ({targetCalories} kcal)
+                {tab.icon}
+                <span>{tab.label}</span>
               </button>
-            )}
-            {baselineCalories !== undefined && (
-              <>
-                <button
-                  type="button"
-                  onClick={() => onChangeSimulatedCalories(Math.max(1200, baselineCalories - 300))}
-                  className="px-3 py-1 rounded-lg text-xs font-semibold bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 transition-colors"
-                >
-                  Déficit Moderado (-300 kcal)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onChangeSimulatedCalories(baselineCalories)}
-                  className="px-3 py-1 rounded-lg text-xs font-semibold bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 transition-colors"
-                >
-                  Mantenimiento ({baselineCalories} kcal)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onChangeSimulatedCalories(Math.min(3800, baselineCalories + 300))}
-                  className="px-3 py-1 rounded-lg text-xs font-semibold bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 transition-colors"
-                >
-                  Superávit (+300 kcal)
-                </button>
-              </>
-            )}
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Lectura Instantánea: Inicial vs Punto Inspeccionado vs Meta */}
+      {inspectedPoint && initialPoint && finalPoint && (
+        <div className="grid grid-cols-3 gap-2.5 bg-slate-50/90 rounded-2xl p-3 border border-slate-200/70 text-xs">
+          <div>
+            <span className="text-[10px] font-semibold uppercase text-slate-400 block">
+              Inicio (Hoy)
+            </span>
+            <span className="font-mono font-bold text-slate-800 text-sm">
+              {selectedMetric === 'presion' && `${Math.round(initialPoint.systolicBP)}/${Math.round(initialPoint.diastolicBP)} mmHg`}
+              {selectedMetric === 'pulsaciones' && `${Math.round(initialPoint.heartRate)} lpm`}
+              {selectedMetric === 'peso_masa' && `${initialPoint.bodyWeight} kg`}
+              {selectedMetric === 'vitalidad' && `${initialPoint.generalHealthScore}/100`}
+            </span>
+          </div>
+
+          <div className="border-x border-slate-200/80 px-3">
+            <span className="text-[10px] font-semibold uppercase text-emerald-700 block">
+              {inspectedPoint.weekLabel} (Simulado)
+            </span>
+            <span className="font-mono font-extrabold text-emerald-800 text-sm">
+              {selectedMetric === 'presion' && `${Math.round(inspectedPoint.systolicBP)}/${Math.round(inspectedPoint.diastolicBP)} mmHg`}
+              {selectedMetric === 'pulsaciones' && `${Math.round(inspectedPoint.heartRate)} lpm`}
+              {selectedMetric === 'peso_masa' && `${inspectedPoint.bodyWeight} kg · IMC ${inspectedPoint.bodyMass}`}
+              {selectedMetric === 'vitalidad' && `${inspectedPoint.generalHealthScore}/100 pts`}
+            </span>
+          </div>
+
+          <div className="text-right">
+            <span className="text-[10px] font-semibold uppercase text-slate-400 block">
+              Meta Clínica
+            </span>
+            <span className="font-mono font-bold text-slate-900 text-sm">
+              {selectedMetric === 'presion' && `${initialPoint.targetSystolic}/${initialPoint.targetDiastolic} mmHg`}
+              {selectedMetric === 'pulsaciones' && `${initialPoint.targetHeartRate} lpm`}
+              {selectedMetric === 'peso_masa' && `${initialPoint.targetWeight} kg`}
+              {selectedMetric === 'vitalidad' && `≥ 85/100`}
+            </span>
           </div>
         </div>
       )}
 
-      {/* Tarjetas Inferiores de Inspección Semanal */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
-        <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200/80">
-          <p className="text-[11px] text-slate-500 font-medium">Presión en {currentPoint.weekLabel}</p>
-          <p className="text-base font-bold text-slate-900 font-mono mt-0.5">
-            {currentPoint.systolicBP} / {currentPoint.diastolicBP} <span className="text-xs text-slate-400 font-normal">mmHg</span>
-          </p>
-          <p className="text-[10px] font-mono mt-0.5 text-emerald-700">
-            {currentPoint.systolicBP - initialPoint.systolicBP <= 0
-              ? `▼ ${(initialPoint.systolicBP - currentPoint.systolicBP).toFixed(1)} mmHg`
-              : `▲ +${(currentPoint.systolicBP - initialPoint.systolicBP).toFixed(1)} mmHg`}
-          </p>
+      {/* Lienzo SVG Interactivo con Transición Suave en Tiempo Real */}
+      <div className="relative w-full overflow-hidden rounded-2xl bg-gradient-to-b from-slate-50/60 to-white border border-slate-100 p-2">
+        <svg
+          viewBox={`0 0 ${width} ${height}`}
+          className="w-full h-auto select-none overflow-visible"
+          role="img"
+          aria-label="Gráfica dinámica de progreso biométrico"
+        >
+          <defs>
+            <linearGradient id="nutrivitalAreaGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={chart.primaryColor} stopOpacity="0.18" />
+              <stop offset="100%" stopColor={chart.primaryColor} stopOpacity="0.01" />
+            </linearGradient>
+          </defs>
+
+          {/* Líneas de cuadrícula horizontal */}
+          {yTicks.map((tick, idx) => {
+            const y = getY(tick);
+            return (
+              <g key={idx}>
+                <line
+                  x1={padLeft}
+                  y1={y}
+                  x2={width - padRight}
+                  y2={y}
+                  stroke="#e2e8f0"
+                  strokeDasharray="3 3"
+                  strokeWidth="1"
+                />
+                <text
+                  x={padLeft - 8}
+                  y={y + 4}
+                  textAnchor="end"
+                  className="fill-slate-400 text-[10px] font-mono"
+                >
+                  {tick}
+                </text>
+              </g>
+            );
+          })}
+
+          {/* Línea de Meta Clínica */}
+          {chart.targetValue >= chart.minY && chart.targetValue <= chart.maxY && (
+            <g className="transition-all duration-300">
+              <line
+                x1={padLeft}
+                y1={getY(chart.targetValue)}
+                x2={width - padRight}
+                y2={getY(chart.targetValue)}
+                stroke="#10b981"
+                strokeWidth="1.75"
+                strokeDasharray="6 4"
+              />
+              <text
+                x={width - padRight}
+                y={getY(chart.targetValue) - 6}
+                textAnchor="end"
+                className="fill-emerald-700 text-[10px] font-bold font-mono"
+              >
+                Meta ({chart.targetValue} {chart.unit})
+              </text>
+            </g>
+          )}
+
+          {/* Área sombreada bajo la curva principal */}
+          {chart.primarySeries.length > 1 && (
+            <path
+              d={buildAreaPath(chart.primarySeries)}
+              fill="url(#nutrivitalAreaGrad)"
+              className="transition-all duration-300 ease-out"
+            />
+          )}
+
+          {/* Curva Secundaria (Diastólica en Presión Arterial) */}
+          {chart.secondarySeries && chart.secondarySeries.length > 1 && (
+            <path
+              d={buildPath(chart.secondarySeries)}
+              fill="none"
+              stroke={chart.secondaryColor}
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="transition-all duration-300 ease-out"
+            />
+          )}
+
+          {/* Curva Principal */}
+          {chart.primarySeries.length > 1 && (
+            <path
+              d={buildPath(chart.primarySeries)}
+              fill="none"
+              stroke={chart.primaryColor}
+              strokeWidth="3"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="transition-all duration-300 ease-out"
+            />
+          )}
+
+          {/* Puntos y etiquetas del eje X */}
+          {safePoints.map((pt, i) => {
+            const x = getX(i);
+            const y1 = getY(chart.primarySeries[i]);
+            const y2 = chart.secondarySeries ? getY(chart.secondarySeries[i]) : null;
+            const isSelected = activeIdx === i;
+
+            return (
+              <g
+                key={pt.week}
+                className="cursor-pointer"
+                onMouseEnter={() => setHoveredIdx(i)}
+                onMouseLeave={() => setHoveredIdx(null)}
+                onClick={() => setHoveredIdx(i)}
+              >
+                {/* Guía vertical al seleccionar */}
+                {isSelected && (
+                  <line
+                    x1={x}
+                    y1={padTop}
+                    x2={x}
+                    y2={padTop + plotH}
+                    stroke="#cbd5e1"
+                    strokeWidth="1"
+                    strokeDasharray="2 2"
+                  />
+                )}
+
+                {/* Punto Secundario */}
+                {y2 !== null && (
+                  <circle
+                    cx={x}
+                    cy={y2}
+                    r={isSelected ? 5 : 3.5}
+                    fill="#ffffff"
+                    stroke={chart.secondaryColor}
+                    strokeWidth="2.5"
+                    className="transition-all duration-300"
+                  />
+                )}
+
+                {/* Punto Principal */}
+                <circle
+                  cx={x}
+                  cy={y1}
+                  r={isSelected ? 6 : 4}
+                  fill={isSelected ? chart.primaryColor : '#ffffff'}
+                  stroke={chart.primaryColor}
+                  strokeWidth="2.5"
+                  className="transition-all duration-300"
+                />
+
+                {/* Etiqueta de valor sobre el punto */}
+                <text
+                  x={x}
+                  y={y1 - 10}
+                  textAnchor="middle"
+                  className={`text-[10px] font-mono font-bold transition-all duration-300 ${isSelected ? 'fill-slate-900' : 'fill-slate-500'
+                    }`}
+                >
+                  {selectedMetric === 'presion' && `${Math.round(pt.systolicBP)}/${Math.round(pt.diastolicBP)}`}
+                  {selectedMetric === 'pulsaciones' && `${Math.round(pt.heartRate)}`}
+                  {selectedMetric === 'peso_masa' && `${pt.bodyWeight}`}
+                  {selectedMetric === 'vitalidad' && `${pt.generalHealthScore}`}
+                </text>
+
+                {/* Etiqueta Semana */}
+                <text
+                  x={x}
+                  y={height - 12}
+                  textAnchor="middle"
+                  className={`text-[10px] font-mono ${isSelected ? 'fill-emerald-800 font-bold' : 'fill-slate-500'
+                    }`}
+                >
+                  {pt.week === 0 ? 'Hoy' : pt.weekLabel}
+                </text>
+              </g>
+            );
+          })}
+        </svg>
+
+        {/* Leyenda compacta */}
+        <div className="flex flex-wrap items-center justify-between gap-2 px-3 pt-1 pb-1 text-[11px] text-slate-500 border-t border-slate-100">
+          <div className="flex items-center gap-4">
+            <span className="flex items-center gap-1.5 font-medium text-slate-700">
+              <span
+                className="w-2.5 h-2.5 rounded-full inline-block"
+                style={{ backgroundColor: chart.primaryColor }}
+              />
+              {chart.primaryLabel}
+            </span>
+            {chart.secondaryLabel && (
+              <span className="flex items-center gap-1.5 font-medium text-slate-700">
+                <span
+                  className="w-2.5 h-2.5 rounded-full inline-block"
+                  style={{ backgroundColor: chart.secondaryColor }}
+                />
+                {chart.secondaryLabel}
+              </span>
+            )}
+            <span className="flex items-center gap-1.5 font-medium text-emerald-700">
+              <span className="w-3 border-t-2 border-dashed border-emerald-500 inline-block" />
+              Meta Clínica
+            </span>
+          </div>
+          <span className="text-[10px] text-slate-400">
+            Toca o pasa el cursor por cada semana
+          </span>
+        </div>
+      </div>
+
+      {/* Simulador Calórico Integrado debajo de la Gráfica */}
+      <div className="bg-emerald-50/70 rounded-2xl p-4 border border-emerald-200/80 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-xl bg-orange-100 text-orange-600 flex items-center justify-center">
+              <Flame className="w-4 h-4" />
+            </div>
+            <div>
+              <span className="text-xs font-bold text-slate-900 block">
+                Simulador de Ingesta Calórica Diaria
+              </span>
+              <span className="text-[11px] text-slate-500">
+                Habitual: <strong className="font-mono">{baselineCalories}</strong> kcal · Meta:{' '}
+                <strong className="font-mono text-emerald-700">{targetCalories}</strong> kcal
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span
+              className={`text-xs font-mono font-extrabold px-2.5 py-1 rounded-xl ${Math.abs(calorieDiffFromTarget) <= 150
+                  ? 'bg-emerald-100 text-emerald-800'
+                  : 'bg-orange-100 text-orange-800'
+                }`}
+            >
+              {simulatedCalories} kcal/día
+            </span>
+
+            {simulatedCalories !== baselineCalories && (
+              <button
+                type="button"
+                onClick={() => onChangeSimulatedCalories(baselineCalories)}
+                title="Restaurar calorías habituales"
+                className="p-1.5 rounded-lg bg-white hover:bg-slate-100 text-slate-600 border border-slate-200 transition-colors"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
         </div>
 
-        <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200/80">
-          <p className="text-[11px] text-slate-500 font-medium">Pulsaciones</p>
-          <p className="text-base font-bold text-slate-900 font-mono mt-0.5">
-            {currentPoint.heartRate} <span className="text-xs text-slate-400 font-normal">lpm</span>
-          </p>
-          <p className="text-[10px] font-mono mt-0.5 text-slate-600">
-            Meta: {currentPoint.targetHeartRate} lpm
-          </p>
-        </div>
+        <input
+          type="range"
+          min={1200}
+          max={3600}
+          step={50}
+          value={simulatedCalories}
+          onChange={(e) => onChangeSimulatedCalories(Number(e.target.value))}
+          aria-label="Simulador de calorías diarias"
+          className="w-full accent-emerald-700 cursor-pointer h-2 bg-emerald-200/80 rounded-lg"
+        />
 
-        <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200/80">
-          <p className="text-[11px] text-slate-500 font-medium">Peso & Masa Corp.</p>
-          <p className="text-base font-bold text-slate-900 font-mono mt-0.5">
-            {currentPoint.bodyWeight} kg <span className="text-xs text-slate-400 font-normal">· {currentPoint.bodyMass}</span>
-          </p>
-          <p className="text-[10px] font-mono mt-0.5 text-emerald-700">
-            Meta: {currentPoint.targetWeight} kg
-          </p>
-        </div>
+        {/* Píldoras de Simulación Rápida IA para ver el efecto directo en la curva */}
+        {aiQuickSupplements.length > 0 && onToggleSupplement && (
+          <div className="pt-2 border-t border-emerald-200/70 flex flex-wrap items-center gap-1.5">
+            <span className="text-[11px] font-bold text-emerald-900 flex items-center gap-1 mr-1">
+              <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Simular sugerencia IA:</span>
+            </span>
 
-        <div className="p-3 rounded-2xl bg-emerald-50/70 border border-emerald-100">
-          <p className="text-[11px] text-emerald-900 font-medium">Score Vitalidad</p>
-          <p className="text-base font-bold text-emerald-900 font-mono mt-0.5">
-            {currentPoint.generalHealthScore} / 100
-          </p>
-          <p className="text-[10px] font-mono mt-0.5 text-emerald-700">
-            +{currentPoint.generalHealthScore - initialPoint.generalHealthScore} pts
-          </p>
-        </div>
+            {aiQuickSupplements.map((supp) => {
+              const isSimulated = activeSet.has(supp.id);
+              return (
+                <button
+                  key={supp.id}
+                  type="button"
+                  onClick={() => onToggleSupplement(supp.id)}
+                  className={`px-2.5 py-1 rounded-xl text-[11px] font-bold transition-all flex items-center gap-1 ${isSimulated
+                      ? 'bg-emerald-700 text-white shadow-2xs'
+                      : 'bg-white hover:bg-emerald-100/80 text-emerald-900 border border-emerald-300/80'
+                    }`}
+                >
+                  {isSimulated ? (
+                    <Check className="w-3 h-3" />
+                  ) : (
+                    <Sparkles className="w-3 h-3 text-emerald-600" />
+                  )}
+                  <span>{supp.name.split(' ').slice(0, 2).join(' ')}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );

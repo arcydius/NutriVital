@@ -8,6 +8,8 @@ import {
   SupplementItem,
 } from '../types/nutrivital';
 
+export type ChartMetricFocus = 'presion' | 'pulsaciones' | 'peso_masa' | 'vitalidad';
+
 /**
  * Categorizes Blood Pressure according to international cardiology guidelines (AHA/ACC).
  */
@@ -62,25 +64,20 @@ export function calculateOverallVitalityScore(
   activeSupplementsCount: number,
   whtr?: number
 ): number {
-  // Pressure penalty: distance from optimal 115/75
   const bpDist = Math.max(0, systolic - 115) * 0.7 + Math.max(0, diastolic - 75) * 0.8;
   const bpScore = Math.max(0, 100 - bpDist * 2.2);
 
-  // Heart rate penalty: distance from resting optimal 64 bpm
   const hrDist = Math.abs(heartRate - 64);
   const hrScore = Math.max(0, 100 - hrDist * 2.5);
 
-  // Body mass / BMI penalty: distance from optimal 22.5
   const massDist = Math.abs(bodyMass - 22.5);
   const massScore = Math.max(0, 100 - massDist * 6.0);
 
-  // Waist-to-Height Ratio penalty (visceral adiposity factor)
   let whtrPenalty = 0;
   if (whtr && whtr > 0.50) {
     whtrPenalty = (whtr - 0.50) * 45;
   }
 
-  // Functional supplement synergy bonus
   const supplementBonus = Math.min(18, activeSupplementsCount * 4.5);
 
   const rawScore =
@@ -107,21 +104,17 @@ export function calculateProjectedImpact(
   const heightCm = biometrics.height || 170;
   const waistCm = biometrics.waistCircumference || 80;
 
-  // 1. Caloric Delta vs baseline
   const baselineCal = biometrics.dailyCalories || 2100;
   const calorieDelta = simulatedCalories - baselineCal;
 
-  // Extra thermogenic burn from metabolic supplements
   const supplementBurn = selectedSupplements.reduce(
     (sum, s) => sum + (s.caloricBurnBonus ?? 0),
     0
   );
   const netDailyCaloricDelta = calorieDelta - supplementBurn;
 
-  // 2. Weight impact from net calories (7700 kcal ≈ 1 kg)
   const weeklyCaloricWeightChange = (netDailyCaloricDelta * 7) / 7700;
 
-  // Extra weight reduction from supplements
   const supplementWeeklyWeightRate = selectedSupplements.reduce(
     (sum, s) => sum + s.weightImpactRateKgPerWeek,
     0
@@ -129,17 +122,14 @@ export function calculateProjectedImpact(
   const totalWeeklyWeightChange = weeklyCaloricWeightChange + supplementWeeklyWeightRate;
   const totalWeightDelta = Number((totalWeeklyWeightChange * weeksClamped).toFixed(2));
 
-  // 3. Waist circumference & WHtR projection (1 kg fat loss ≈ 1 cm waist reduction)
   const waistDelta = Number(totalWeightDelta.toFixed(1));
   const projectedWaist = Math.max(40, waistCm + waistDelta);
   const currentWhtr = calculateWHtR(waistCm, heightCm);
   const projectedWhtr = calculateWHtR(projectedWaist, heightCm);
   const whtrStatus = getWHtRStatus(projectedWhtr);
 
-  // Visceral fat peripheral resistance load on systolic BP (if WHtR > 0.50)
   const visceralFatBpLoad = currentWhtr > 0.50 ? (currentWhtr - 0.50) * 10 : 0;
 
-  // 4. Body Mass / BMI impact (Calculated dynamically using Height when available)
   const projectedWeight = Math.max(40, biometrics.bodyWeight + totalWeightDelta);
   const baselineBmi = biometrics.height
     ? calculateBMI(biometrics.bodyWeight, biometrics.height)
@@ -150,7 +140,6 @@ export function calculateProjectedImpact(
 
   const totalBodyMassDelta = Number((projectedMass - baselineBmi).toFixed(2));
 
-  // 5. Blood pressure effects:
   const weightBpSystolicImpact = totalWeightDelta * 0.95;
   const weightBpDiastolicImpact = totalWeightDelta * 0.65;
 
@@ -158,18 +147,15 @@ export function calculateProjectedImpact(
   const rawSupplementDiastolic = selectedSupplements.reduce((sum, s) => sum + s.diastolicEffect, 0);
   const rawSupplementHr = selectedSupplements.reduce((sum, s) => sum + s.heartRateEffect, 0);
 
-  // Saturation factor prevents excessive compounding of many supplements
   const satFactor = 1 / (1 + 0.03 * Math.abs(rawSupplementSystolic));
   const finalSuppSystolic = rawSupplementSystolic * satFactor;
   const finalSuppDiastolic = rawSupplementDiastolic * satFactor;
   const finalSuppHr = rawSupplementHr * (1 / (1 + 0.03 * Math.abs(rawSupplementHr)));
 
-  // Combine physiological factors (including visceral fat BP load)
   const totalSystolicDelta = Number((finalSuppSystolic + weightBpSystolicImpact + visceralFatBpLoad).toFixed(1));
   const totalDiastolicDelta = Number((finalSuppDiastolic + weightBpDiastolicImpact + visceralFatBpLoad * 0.6).toFixed(1));
   const totalHeartRateDelta = Number(finalSuppHr.toFixed(1));
 
-  // Projected values
   const projectedSystolic = Math.max(90, Math.min(200, biometrics.systolicBP + totalSystolicDelta));
   const projectedDiastolic = Math.max(55, Math.min(130, biometrics.diastolicBP + totalDiastolicDelta));
   const projectedHr = Math.max(48, Math.min(130, biometrics.heartRate + totalHeartRateDelta));
@@ -295,7 +281,6 @@ export function generateDynamicBiometricTrend(
     const curHr = Number((biometrics.heartRate + impact.heartRateDelta * adaptationCurve).toFixed(1));
     const curWeight = Number((biometrics.bodyWeight + impact.weightDelta * progressRatio).toFixed(1));
 
-    // Dynamic BMI calculation using height
     const curMass = biometrics.height
       ? calculateBMI(curWeight, biometrics.height)
       : Number(((biometrics.bodyMass || 24) + impact.bodyMassDelta * progressRatio).toFixed(1));
@@ -333,15 +318,17 @@ export function generateDynamicBiometricTrend(
 }
 
 /**
- * AI / Clinical Rule-based Recommendation Engine:
- * Analyzes client biometrics (including height and waist circumference) against selected supplements and calorie goals.
+ * AI / Predictive Chart Recommendation Engine:
+ * Analyzes real curve trajectories (Sem 0 -> Sem N) against client goals and active chart view.
  */
 export function generateNutritionalRecommendations(
   biometrics: ClientBiometrics,
   goals: ClientHealthGoals,
   selectedSupplements: SupplementItem[],
   simulatedCalories: number,
-  allProducts: Product[]
+  allProducts: Product[],
+  trendPoints: BiometricTrendPoint[] = [],
+  selectedChartMetric: ChartMetricFocus = 'presion'
 ): NutritionRecommendation[] {
   const recs: NutritionRecommendation[] = [];
   const activeIds = new Set(selectedSupplements.map((s) => s.id));
@@ -349,129 +336,187 @@ export function generateNutritionalRecommendations(
   const heightCm = biometrics.height || 170;
   const waistCm = biometrics.waistCircumference || 80;
 
-  // 1. Blood Pressure Analysis
-  const bpCat = getBloodPressureCategory(biometrics.systolicBP, biometrics.diastolicBP);
-  if (biometrics.systolicBP >= 130 || biometrics.diastolicBP >= 85) {
+  // Extracción de puntos de la curva real (Inicial vs Final Proyectado)
+  const fallbackTrend =
+    trendPoints.length > 0
+      ? trendPoints
+      : generateDynamicBiometricTrend(
+        biometrics,
+        goals,
+        selectedSupplements,
+        simulatedCalories,
+        goals.timelineWeeks || 8
+      );
+
+  const initialPt = fallbackTrend[0];
+  const finalPt = fallbackTrend[fallbackTrend.length - 1];
+  const finalWeekLabel = finalPt.weekLabel;
+
+  // 1. Análisis Predictivo de Curva de Presión Arterial
+  const sysGapToGoal = Number((finalPt.systolicBP - goals.targetSystolicBP).toFixed(1));
+  const diaGapToGoal = Number((finalPt.diastolicBP - goals.targetDiastolicBP).toFixed(1));
+  const projectedBpCat = getBloodPressureCategory(finalPt.systolicBP, finalPt.diastolicBP);
+
+  if (sysGapToGoal > 2 || diaGapToGoal > 2 || finalPt.systolicBP >= 128) {
     const hasOmega = activeIds.has('SUP-OMEGA3');
     const hasMagnesium = activeIds.has('SUP-MAGNESIO');
 
-    if (!hasOmega || !hasMagnesium) {
-      const needed: string[] = [];
-      if (!hasOmega) needed.push('Omega-3 EPA/DHA');
-      if (!hasMagnesium) needed.push('Magnesio Bisglicinato Quelado');
+    const recommendedSuppId = !hasOmega
+      ? 'SUP-OMEGA3'
+      : !hasMagnesium
+        ? 'SUP-MAGNESIO'
+        : 'SUP-POTASIO_ELECTRO';
+    const recommendedSuppLabel = !hasOmega
+      ? 'Omega-3 Vegano EPA+DHA'
+      : !hasMagnesium
+        ? 'Magnesio Bisglicinato Quelado'
+        : 'Complejo de Potasio & Electrolitos';
 
-      recs.push({
-        id: 'rec-bp-vasodilation',
-        category: 'presion',
-        urgency: biometrics.systolicBP >= 140 ? 'alta' : 'media',
-        title: `Protocolo Endotelial Anti-Hipertensivo (${bpCat})`,
-        message: `Tu presión actual (${biometrics.systolicBP}/${biometrics.diastolicBP} mmHg) indica resistencia vascular periférica. Añadir ${needed.join(' y ')} incrementará la síntesis de óxido nítrico y relajará la musculatura lisa arterial (-7 mmHg proyectado).`,
-        suggestedAction: 'Incorporar vasodilatadores naturales al plan diario',
-        relatedProductId: 'NV-104',
-      });
-    }
-  } else if (biometrics.systolicBP <= 118 && biometrics.diastolicBP <= 76) {
     recs.push({
-      id: 'rec-bp-optimal',
+      id: 'rec-curve-bp-gap',
       category: 'presion',
-      urgency: 'positiva',
-      title: 'Presión Arterial en Rango Óptimo',
-      message: `Excelente control cardiovascular (${biometrics.systolicBP}/${biometrics.diastolicBP} mmHg). Tus arterias presentan óptima compliance elástica. Mantén el consumo de antioxidantes y potasio.`,
-      suggestedAction: 'Mantener hidratación celular y electrolitos',
-      relatedProductId: 'NV-102',
-    });
-  }
-
-  // 2. Waist-to-Height Ratio (WHtR) & Visceral Fat Risk Analysis
-  const whtr = calculateWHtR(waistCm, heightCm);
-  if (whtr > 0.50) {
-    recs.push({
-      id: 'rec-whtr-visceral',
-      category: 'suplemento',
-      urgency: whtr > 0.60 ? 'alta' : 'media',
-      title: `Optimización de Grasa Visceral (Cintura/Altura: ${whtr})`,
-      message: `Tu relación cintura/estatura de ${whtr} (${getWHtRStatus(whtr)}) señala acumulación de tejido adiposo visceral en cintura (${waistCm} cm). Aplicar un déficit calórico de 250 kcal/día reducirá la tensión mecánica sobre la circulación.`,
-      suggestedAction: 'Aplicar déficit calórico moderado y ejercicio aeróbico',
-      suggestedCalorieDelta: -250,
-      relatedProductId: 'NV-101',
-    });
-  }
-
-  // 3. Heart Rate / Pulsaciones Analysis
-  if (biometrics.heartRate >= 80) {
-    const hasAshwa = activeIds.has('SUP-ASHWAGANDHA');
-    if (!hasAshwa) {
-      recs.push({
-        id: 'rec-hr-parasympathetic',
-        category: 'pulsaciones',
-        urgency: 'media',
-        title: 'Estabilización del Ritmo Cardíaco en Reposo',
-        message: `Tus pulsaciones en reposo (${biometrics.heartRate} lpm) superan la media óptima (60-72 lpm), señalando tono simpático o cortisol reactivo. El extracto de Ashwagandha KSM-66 y la CoQ10 modulan el ritmo miocárdico (-4.5 lpm).`,
-        suggestedAction: 'Añadir adaptógenos reguladores del tono autónomo',
-        relatedProductId: 'NV-108',
-      });
-    }
-  }
-
-  // 4. Caloric Intake & Weight / Body Mass Goals Analysis
-  const calDelta = simulatedCalories - goals.targetCalories;
-  if (calDelta > 250) {
-    recs.push({
-      id: 'rec-cal-surplus',
-      category: 'calorias',
-      urgency: 'media',
-      title: `Ajuste Calórico: Excedente de +${calDelta} kcal/día`,
-      message: `Tu consumo simulado (${simulatedCalories} kcal) excede tu meta de déficit/control (${goals.targetCalories} kcal). Este excedente frena la pérdida de peso en ~0.3 kg/semana e incrementa la volemia arterial.`,
-      suggestedAction: `Reducir ${calDelta} kcal mediante reemplazo por batido funcional saciante`,
-      suggestedCalorieDelta: -calDelta,
-      relatedProductId: 'NV-101',
-    });
-  } else if (calDelta < -400) {
-    recs.push({
-      id: 'rec-cal-deficit-excess',
-      category: 'alerta',
-      urgency: 'media',
-      title: 'Alerta de Déficit Calórico Muy Agresivo',
-      message: `Un déficit excesivo (${Math.abs(calDelta)} kcal por debajo de tu meta) puede inducir pérdida de masa magra y estrés suprarrenal. Asegura un mínimo de 1.6g de proteína/kg para proteger tu masa corporal.`,
-      suggestedAction: 'Aumentar la densidad proteica sin sumar azúcares simples',
-      suggestedCalorieDelta: 250,
-      relatedProductId: 'NV-101',
+      urgency: finalPt.systolicBP >= 138 || sysGapToGoal >= 10 ? 'alta' : 'media',
+      title: `Brecha Arterial Detectada en Curva (${projectedBpCat})`,
+      message: `La curva proyecta cerrar en ${Math.round(finalPt.systolicBP)}/${Math.round(finalPt.diastolicBP)} mmHg en ${finalWeekLabel}, quedando +${Math.max(0, sysGapToGoal).toFixed(1)} mmHg por encima de tu meta (${goals.targetSystolicBP}/${goals.targetDiastolicBP} mmHg). Integrar ${recommendedSuppLabel} acelerará la vasodilatación endotelial.`,
+      suggestedAction: `Simular ${recommendedSuppLabel} para doblar la curva hacia tu meta`,
+      relatedProductId: 'NV-104',
+      relatedSupplementId: recommendedSuppId,
+      chartMetricTrigger: 'presion',
+      metricEvidence: `${Math.round(initialPt.systolicBP)}/${Math.round(initialPt.diastolicBP)} → ${Math.round(finalPt.systolicBP)}/${Math.round(finalPt.diastolicBP)} mmHg (Meta: ${goals.targetSystolicBP}/${goals.targetDiastolicBP})`,
     });
   } else {
     recs.push({
-      id: 'rec-cal-balanced',
+      id: 'rec-curve-bp-converging',
+      category: 'presion',
+      urgency: 'positiva',
+      title: 'Curva de Presión Arterial Convergiendo a la Meta',
+      message: `La trayectoria arterial desciende de ${Math.round(initialPt.systolicBP)}/${Math.round(initialPt.diastolicBP)} mmHg a ${Math.round(finalPt.systolicBP)}/${Math.round(finalPt.diastolicBP)} mmHg en ${finalWeekLabel}, alineándose con tu objetivo clínico (${goals.targetSystolicBP}/${goals.targetDiastolicBP} mmHg).`,
+      suggestedAction: 'Mantener protocolo antioxidante y balance electrolítico actual',
+      relatedProductId: 'NV-102',
+      relatedSupplementId: 'SUP-MAGNESIO',
+      chartMetricTrigger: 'presion',
+      metricEvidence: `Tendencia: ${(finalPt.systolicBP - initialPt.systolicBP).toFixed(1)} mmHg en ${finalWeekLabel}`,
+    });
+  }
+
+  // 2. Análisis Predictivo de Curva de Ritmo Cardíaco (Pulsaciones)
+  const hrGapToGoal = Number((finalPt.heartRate - goals.targetHeartRate).toFixed(1));
+  if (hrGapToGoal > 3 || finalPt.heartRate >= 76) {
+    const hasAshwa = activeIds.has('SUP-ASHWAGANDHA');
+    recs.push({
+      id: 'rec-curve-hr-elevated',
+      category: 'pulsaciones',
+      urgency: finalPt.heartRate >= 84 ? 'alta' : 'media',
+      title: `Modulación Autonómica en Curva Cardíaca (+${Math.max(0, hrGapToGoal).toFixed(1)} lpm sobre meta)`,
+      message: `En ${finalWeekLabel}, tus pulsaciones en reposo proyectan ${Math.round(finalPt.heartRate)} lpm frente a tu meta de ${goals.targetHeartRate} lpm. El extracto de Ashwagandha KSM-66 reduce el tono simpático y estabiliza la variabilidad cardíaca.`,
+      suggestedAction: hasAshwa
+        ? 'Mantener Ashwagandha KSM-66 y reducir estimulantes vespertinos'
+        : 'Activar Ashwagandha KSM-66 en la simulación para bajar lpm',
+      relatedProductId: 'NV-108',
+      relatedSupplementId: 'SUP-ASHWAGANDHA',
+      chartMetricTrigger: 'pulsaciones',
+      metricEvidence: `${Math.round(initialPt.heartRate)} lpm → ${Math.round(finalPt.heartRate)} lpm (Meta: ${goals.targetHeartRate} lpm)`,
+    });
+  }
+
+  // 3. Análisis Predictivo de Peso, IMC, Cintura (WHtR) y Balance Calórico
+  const weightGapToGoal = Number((finalPt.bodyWeight - goals.targetWeight).toFixed(1));
+  const weightCurveChange = Number((finalPt.bodyWeight - initialPt.bodyWeight).toFixed(1));
+  const calDeltaVsTarget = simulatedCalories - goals.targetCalories;
+  const projectedWaist = Math.max(40, waistCm + weightCurveChange);
+  const projectedWhtr = calculateWHtR(projectedWaist, heightCm);
+
+  if (calDeltaVsTarget > 200 || (weightGapToGoal > 1.5 && weightCurveChange >= 0)) {
+    const suggestedCut = Math.min(450, Math.max(250, calDeltaVsTarget > 0 ? calDeltaVsTarget : 300));
+    recs.push({
+      id: 'rec-curve-weight-stall',
+      category: 'calorias',
+      urgency: weightGapToGoal > 4 ? 'alta' : 'media',
+      title: `Desviación en Curva de Peso (${weightCurveChange >= 0 ? `+${weightCurveChange}` : weightCurveChange} kg en ${finalWeekLabel})`,
+      message: `Con ${simulatedCalories} kcal/día, tu peso proyectado en ${finalWeekLabel} es de ${finalPt.bodyWeight} kg (IMC ${finalPt.bodyMass}), manteniéndose a ${weightGapToGoal.toFixed(1)} kg de tu meta (${goals.targetWeight} kg). Aplicar un ajuste de -${suggestedCut} kcal/día inclinará la curva descendente.`,
+      suggestedAction: `Aplicar ajuste de -${suggestedCut} kcal/día en el simulador`,
+      suggestedCalorieDelta: -suggestedCut,
+      relatedProductId: 'NV-101',
+      relatedSupplementId: 'SUP-PROTEINA_MATCHA',
+      chartMetricTrigger: 'peso_masa',
+      metricEvidence: `${initialPt.bodyWeight} kg → ${finalPt.bodyWeight} kg · IMC ${finalPt.bodyMass} (Meta: ${goals.targetWeight} kg)`,
+    });
+  } else if (calDeltaVsTarget < -400) {
+    recs.push({
+      id: 'rec-curve-aggressive-deficit',
+      category: 'alerta',
+      urgency: 'media',
+      title: `Déficit Calórico Excesivo Detectado (${simulatedCalories} kcal/día)`,
+      message: `El simulador opera ${Math.abs(calDeltaVsTarget)} kcal por debajo de tu meta (${goals.targetCalories} kcal). Aunque el peso baja a ${finalPt.bodyWeight} kg, un recorte tan brusco compromete la masa muscular magra y el score de vitalidad.`,
+      suggestedAction: 'Subir +250 kcal con proteína vegetal germinada para proteger masa magra',
+      suggestedCalorieDelta: 250,
+      relatedProductId: 'NV-101',
+      relatedSupplementId: 'SUP-PROTEINA_MATCHA',
+      chartMetricTrigger: 'peso_masa',
+      metricEvidence: `Déficit actual: ${calDeltaVsTarget} kcal vs Meta (${goals.targetCalories} kcal)`,
+    });
+  } else if (projectedWhtr > 0.50) {
+    recs.push({
+      id: 'rec-curve-whtr-visceral',
+      category: 'suplemento',
+      urgency: projectedWhtr > 0.58 ? 'alta' : 'media',
+      title: `Reducción de Adiposidad Visceral (WHtR Proyectado: ${projectedWhtr})`,
+      message: `Tu relación cintura/estatura proyectada de ${projectedWhtr} (${getWHtRStatus(projectedWhtr)}) sugiere potenciar la termogénesis lipídica. Combinar Proteína Bio-Activa con Matcha acelera la reducción abdominal sin perder tono muscular.`,
+      suggestedAction: 'Simular complejo termogénico Matcha & Proteína Germinada',
+      relatedProductId: 'NV-101',
+      relatedSupplementId: 'SUP-PROTEINA_MATCHA',
+      chartMetricTrigger: 'peso_masa',
+      metricEvidence: `Cintura proj.: ${projectedWaist.toFixed(1)} cm · IMC ${finalPt.bodyMass}`,
+    });
+  } else {
+    recs.push({
+      id: 'rec-curve-weight-optimal',
       category: 'calorias',
       urgency: 'positiva',
-      title: 'Balance Calórico y Metabólico Alineado',
-      message: `Tu dieta calórica (${simulatedCalories} kcal/día) está perfectamente sincronizada con tu meta (${goals.targetCalories} kcal/día). Proyectas un progreso sostenible hacia tu peso objetivo de ${goals.targetWeight} kg.`,
-      suggestedAction: 'Continuar con el régimen actual y asegurar hidratación',
-    });
-  }
-
-  // 5. Synergy recommendation for Body Mass preservation
-  if (biometrics.bodyWeight > goals.targetWeight && !activeNames.some((n) => n.includes('proteína') || n.includes('matcha'))) {
-    recs.push({
-      id: 'rec-body-mass-protection',
-      category: 'suplemento',
-      urgency: 'preventiva',
-      title: 'Protección de Masa Corporal & Aceleración Termogénica',
-      message: 'Durante el proceso de reducción de peso, incorporar proteína vegetal germinada con Matcha ceremonial previene la degradación muscular e incrementa el gasto energético basal en +120 kcal/día.',
-      suggestedAction: 'Añadir Proteína Bio-Activa Matcha a la simulación',
+      title: 'Trayectoria de Peso e IMC en Zona Óptima',
+      message: `Con ${simulatedCalories} kcal/día, tu curva evoluciona de ${initialPt.bodyWeight} kg a ${finalPt.bodyWeight} kg (IMC ${finalPt.bodyMass}) en ${finalWeekLabel}, acercándose de forma saludable a tu meta de ${goals.targetWeight} kg.`,
+      suggestedAction: 'Conservar el balance calórico y proteico actual',
       relatedProductId: 'NV-101',
+      chartMetricTrigger: 'peso_masa',
+      metricEvidence: `${initialPt.bodyWeight} kg → ${finalPt.bodyWeight} kg (Meta: ${goals.targetWeight} kg)`,
     });
   }
 
-  // 6. Electrolyte / Sodium balance recommendation
-  if (!activeIds.has('SUP-POTASIO_ELECTRO') && biometrics.systolicBP >= 125) {
+  // 4. Análisis Predictivo del Score de Vitalidad Celular
+  const vitalityGain = finalPt.generalHealthScore - initialPt.generalHealthScore;
+  if (finalPt.generalHealthScore < 85 || vitalityGain < 8) {
+    const needsThermogenic =
+      biometrics.bodyWeight > goals.targetWeight &&
+      !activeNames.some((n) => n.includes('proteína') || n.includes('matcha'));
+
     recs.push({
-      id: 'rec-electrolytes',
+      id: 'rec-curve-vitality-boost',
       category: 'suplemento',
       urgency: 'preventiva',
-      title: 'Optimización del Ratio Sodio/Potasio',
-      message: 'El citrato de potasio promueve la natriuresis renal (eliminación de sodio acumulado), reduciendo la presión intravascular y la retención de líquidos en 2 a 3 semanas.',
-      suggestedAction: 'Integrar complejo de potasio y electrolitos en el desayuno',
+      title: `Potenciación de Vitalidad Celular (${finalPt.generalHealthScore}/100 en ${finalWeekLabel})`,
+      message: `Tu curva de vitalidad gana ${vitalityGain >= 0 ? `+${vitalityGain}` : vitalityGain} pts hasta alcanzar ${finalPt.generalHealthScore}/100. ${needsThermogenic
+          ? 'Incorporar Proteína Bio-Activa Matcha añade +120 kcal de gasto basal y protege la síntesis mitocondrial.'
+          : 'Activar cofactores antioxidantes y electrolitos maximiza la pendiente de recuperación celular.'
+        }`,
+      suggestedAction: 'Activar soporte mitocondrial en la simulación',
+      relatedProductId: needsThermogenic ? 'NV-101' : 'NV-102',
+      relatedSupplementId: needsThermogenic ? 'SUP-PROTEINA_MATCHA' : 'SUP-POTASIO_ELECTRO',
+      chartMetricTrigger: 'vitalidad',
+      metricEvidence: `Score: ${initialPt.generalHealthScore}/100 → ${finalPt.generalHealthScore}/100 (${vitalityGain >= 0 ? `+${vitalityGain}` : vitalityGain} pts)`,
     });
   }
 
-  return recs;
+  // Ordenar priorizando la pestaña activa en la gráfica y luego la urgencia clínica
+  const urgencyWeight: Record<NutritionRecommendation['urgency'], number> = {
+    alta: 4,
+    media: 3,
+    preventiva: 2,
+    positiva: 1,
+  };
+
+  return recs.sort((a, b) => {
+    const aMatchesChart = a.chartMetricTrigger === selectedChartMetric ? 10 : 0;
+    const bMatchesChart = b.chartMetricTrigger === selectedChartMetric ? 10 : 0;
+    return bMatchesChart + urgencyWeight[b.urgency] - (aMatchesChart + urgencyWeight[a.urgency]);
+  });
 }

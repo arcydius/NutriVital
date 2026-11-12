@@ -246,11 +246,14 @@ export interface ProjectedImpactSummary {
 
 export interface NutritionRecommendation {
   id: string;
-  category: 'presion' | 'pulsaciones' | 'calorias' | 'suplemento' | 'alerta';
+  category: 'presion' | 'pulsaciones' | 'calorias' | 'suplemento' | 'alerta' | 'positiva';
   title: string;
   message: string;
   urgency: 'alta' | 'media' | 'preventiva' | 'positiva';
   suggestedAction: string;
   relatedProductId?: string;
+  relatedSupplementId?: string;
   suggestedCalorieDelta?: number;
+  chartMetricTrigger?: 'presion' | 'pulsaciones' | 'peso_masa' | 'vitalidad';
+  metricEvidence?: string;
 }

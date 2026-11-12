@@ -71,9 +71,19 @@ export const HealthAnalyticsSection: React.FC<HealthAnalyticsSectionProps> = ({
       currentClient.goals,
       selectedSupplements,
       simulatedCalories,
-      products
+      products,
+      trendPoints,
+      selectedChartMetric
     );
-  }, [currentClient.biometrics, currentClient.goals, selectedSupplements, simulatedCalories, products]);
+  }, [
+    currentClient.biometrics,
+    currentClient.goals,
+    selectedSupplements,
+    simulatedCalories,
+    products,
+    trendPoints,
+    selectedChartMetric,
+  ]);
 
   const handleApplyCalorieDelta = (delta: number) => {
     onChangeSimulatedCalories(Math.max(1200, Math.min(3800, simulatedCalories + delta)));
@@ -85,7 +95,7 @@ export const HealthAnalyticsSection: React.FC<HealthAnalyticsSectionProps> = ({
       aria-labelledby="health-analytics-heading"
       className="py-16 bg-[#F8FAFC] border-t border-slate-200/80"
     >
-      <div className="max-w-7xl mx-auto px-6 space-y-10">
+      <div className="max-w-7xl mx-auto px-6 space-y-8">
         {/* Encabezado y resumen del cliente */}
         <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6">
           <div className="space-y-2 max-w-2xl">
@@ -99,7 +109,7 @@ export const HealthAnalyticsSection: React.FC<HealthAnalyticsSectionProps> = ({
               Tu Perfil Biométrico & Gráfica de Metas
             </h2>
             <p className="text-sm text-slate-600 leading-relaxed">
-              Analiza en tiempo real el efecto de tu dieta e ingesta calórica sobre tu presión arterial, pulsaciones cardíacas y composición corporal.
+              Simula sugerencias de la IA y observa en tiempo real cómo se transforman tus curvas de presión arterial, ritmo cardíaco y composición corporal.
             </p>
           </div>
 
@@ -132,34 +142,48 @@ export const HealthAnalyticsSection: React.FC<HealthAnalyticsSectionProps> = ({
           </div>
         </div>
 
-        {/* 1. Gráfica Dinámica con el Simulador Calórico Integrado debajo del SVG */}
-        <DynamicProgressChart
-          trendPoints={trendPoints}
-          impactSummary={impactSummary}
-          selectedMetric={selectedChartMetric}
-          onSelectMetric={onSelectChartMetric}
-          timelineWeeks={timelineWeeks}
-          simulatedCalories={simulatedCalories}
-          onChangeSimulatedCalories={onChangeSimulatedCalories}
-          targetCalories={currentClient.goals.targetCalories}
-          baselineCalories={currentClient.biometrics.dailyCalories}
-        />
+        {/* Vista Dividida en Tiempo Real: Gráfica Fija a la Izquierda + KPIs & IA a la Derecha */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+          {/* Columna Izquierda (Sticky): Gráfica Dinámica + Simulador Calórico + Píldoras IA */}
+          <div className="lg:col-span-7 lg:sticky lg:top-24">
+            <DynamicProgressChart
+              trendPoints={trendPoints}
+              impactSummary={impactSummary}
+              selectedMetric={selectedChartMetric}
+              onSelectMetric={onSelectChartMetric}
+              timelineWeeks={timelineWeeks}
+              simulatedCalories={simulatedCalories}
+              onChangeSimulatedCalories={onChangeSimulatedCalories}
+              targetCalories={currentClient.goals.targetCalories}
+              baselineCalories={currentClient.biometrics.dailyCalories}
+              recommendations={recommendations}
+              activeSupplementIds={activeSupplementIds}
+              onToggleSupplement={onToggleSupplement}
+              availableSupplements={AVAILABLE_SUPPLEMENTS}
+            />
+          </div>
 
-        {/* 2. Análisis e Impacto de Suplementos */}
-        <SupplementAnalysisEngine
-          biometrics={currentClient.biometrics}
-          goals={currentClient.goals}
-          activeSupplementIds={activeSupplementIds}
-          onToggleSupplement={onToggleSupplement}
-          simulatedCalories={simulatedCalories}
-          onChangeSimulatedCalories={onChangeSimulatedCalories}
-          impactSummary={impactSummary}
-          recommendations={recommendations}
-          onApplyCalorieDelta={handleApplyCalorieDelta}
-          onAddToCart={onAddToCart}
-          allProducts={products}
-          availableSupplements={AVAILABLE_SUPPLEMENTS}
-        />
+          {/* Columna Derecha: KPIs Proyectados & Diagnósticos Predictivos de IA */}
+          <div className="lg:col-span-5">
+            <SupplementAnalysisEngine
+              biometrics={currentClient.biometrics}
+              goals={currentClient.goals}
+              activeSupplementIds={activeSupplementIds}
+              onToggleSupplement={onToggleSupplement}
+              simulatedCalories={simulatedCalories}
+              onChangeSimulatedCalories={onChangeSimulatedCalories}
+              impactSummary={impactSummary}
+              recommendations={recommendations}
+              onApplyCalorieDelta={handleApplyCalorieDelta}
+              onAddToCart={onAddToCart}
+              allProducts={products}
+              availableSupplements={AVAILABLE_SUPPLEMENTS}
+              trendPoints={trendPoints}
+              selectedChartMetric={selectedChartMetric}
+              timelineWeeks={timelineWeeks}
+            />
+          </div>
+        </div>
       </div>
     </section>
   );
