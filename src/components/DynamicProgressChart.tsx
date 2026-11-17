@@ -11,6 +11,8 @@ import {
   TrendingDown,
   TrendingUp,
   FileText,
+  LineChart,
+  ShieldAlert,
 } from 'lucide-react';
 import {
   BiometricTrendPoint,
@@ -19,8 +21,17 @@ import {
   ProjectedImpactSummary,
   SupplementItem,
 } from '../types/nutrivital';
+import {
+  calculateSeriesLinearRegression,
+  getMedicalMetricRange,
+} from '../utils/healthAnalytics';
 
-export type ChartMetricView = 'presion' | 'pulsaciones' | 'peso_masa' | 'vitalidad';
+export type ChartMetricView =
+  | 'presion'
+  | 'pulsaciones'
+  | 'peso_masa'
+  | 'vitalidad'
+  | 'higado_graso';
 
 interface DynamicProgressChartProps {
   trendPoints: BiometricTrendPoint[];
@@ -60,12 +71,14 @@ export const DynamicProgressChart: React.FC<DynamicProgressChartProps> = ({
   medicalReports = [],
 }) => {
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
+  const [showRegression, setShowRegression] = useState<boolean>(true);
 
   const tabs: { id: ChartMetricView; label: string; icon: React.ReactNode }[] = [
     { id: 'presion', label: 'Presión Arterial', icon: <Activity className="w-3.5 h-3.5" /> },
     { id: 'pulsaciones', label: 'Pulsaciones', icon: <Heart className="w-3.5 h-3.5" /> },
     { id: 'peso_masa', label: 'Peso & IMC', icon: <Scale className="w-3.5 h-3.5" /> },
     { id: 'vitalidad', label: 'Vitalidad', icon: <Zap className="w-3.5 h-3.5" /> },
+    { id: 'higado_graso', label: 'Hígado Graso', icon: <ShieldAlert className="w-3.5 h-3.5" /> },
   ];
 
   // Dimensiones del lienzo SVG
@@ -129,8 +142,11 @@ export const DynamicProgressChart: React.FC<DynamicProgressChartProps> = ({
       const hrs = safePoints.map((p) => p.heartRate);
       const target = safePoints[0].targetHeartRate;
       const allVals = [...hrs, target];
-      const minY = Math.floor((Math.min(...allVals) - 6) / 5) * 5;
-      const maxY = Math.ceil((Math.max(...allVals) + 6) / 5) * 5;
+      // Escala fisiológica revisada y optimizada para reposo (rango clínico humano)
+      const minVal = Math.min(...allVals);
+      const maxVal = Math.max(...allVals);
+      const minY = Math.max(45, Math.floor((minVal - 6) / 5) * 5);
+      const maxY = Math.min(130, Math.ceil((maxVal + 6) / 5) * 5);
 
       return {
         minY,
@@ -139,7 +155,7 @@ export const DynamicProgressChart: React.FC<DynamicProgressChartProps> = ({
         primarySeries: hrs,
         secondarySeries: null,
         targetValue: target,
-        primaryLabel: 'Ritmo Cardíaco',
+        primaryLabel: 'Ritmo Cardíaco en Reposo',
         secondaryLabel: '',
         primaryColor: '#e11d48',
         secondaryColor: '',
@@ -163,6 +179,27 @@ export const DynamicProgressChart: React.FC<DynamicProgressChartProps> = ({
         primaryLabel: 'Peso Corporal',
         secondaryLabel: '',
         primaryColor: '#059669',
+        secondaryColor: '',
+      };
+    }
+
+    if (selectedMetric === 'higado_graso') {
+      const scores = safePoints.map((p) => p.fattyLiverScore ?? 0);
+      const target = safePoints[0].targetFattyLiverScore ?? 10;
+      const allVals = [...scores, target];
+      const minY = 0;
+      const maxY = Math.max(100, Math.ceil((Math.max(...allVals) + 10) / 10) * 10);
+
+      return {
+        minY,
+        maxY,
+        unit: '% Riesgo',
+        primarySeries: scores,
+        secondarySeries: null,
+        targetValue: target,
+        primaryLabel: 'Riesgo Esteatosis Hepática',
+        secondaryLabel: '',
+        primaryColor: '#d97706',
         secondaryColor: '',
       };
     }
@@ -282,50 +319,127 @@ export const DynamicProgressChart: React.FC<DynamicProgressChartProps> = ({
         </div>
       </div>
 
-      {/* Lectura Instantánea: Inicial vs Punto Inspeccionado vs Meta */}
-      {inspectedPoint && initialPoint && finalPoint && (
-        <div className="grid grid-cols-3 gap-2.5 bg-slate-50/90 rounded-2xl p-3 border border-slate-200/70 text-xs">
-          <div>
-            <span className="text-[10px] font-semibold uppercase text-slate-400 block">
-              Inicio (Hoy)
-            </span>
-            <span className="font-mono font-bold text-slate-800 text-sm">
-              {selectedMetric === 'presion' &&
-                `${Math.round(initialPoint.systolicBP)}/${Math.round(initialPoint.diastolicBP)} mmHg`}
-              {selectedMetric === 'pulsaciones' && `${Math.round(initialPoint.heartRate)} lpm`}
-              {selectedMetric === 'peso_masa' && `${initialPoint.bodyWeight} kg`}
-              {selectedMetric === 'vitalidad' && `${initialPoint.generalHealthScore}/100`}
-            </span>
-          </div>
+      {/* Lectura Instantánea: Inicial vs Punto Inspeccionado vs Meta con Indicadores de Color */}
+      {inspectedPoint && initialPoint && finalPoint && (() => {
+        const initRange =
+          selectedMetric === 'presion'
+            ? getMedicalMetricRange('systolic', initialPoint.systolicBP)
+            : selectedMetric === 'pulsaciones'
+              ? getMedicalMetricRange('heartRate', initialPoint.heartRate)
+              : selectedMetric === 'peso_masa'
+                ? getMedicalMetricRange('bmi', initialPoint.bodyMass)
+                : selectedMetric === 'higado_graso'
+                  ? getMedicalMetricRange('fattyLiver', Math.min(3, Math.floor((initialPoint.fattyLiverScore ?? 0) / 30)))
+                  : { status: 'normal', label: 'Óptimo', badgeClass: 'bg-emerald-50 text-emerald-800 border-emerald-200', textClass: 'text-emerald-700', dotClass: 'bg-emerald-500' };
 
-          <div className="border-x border-slate-200/80 px-3">
-            <span className="text-[10px] font-semibold uppercase text-emerald-700 block">
-              {inspectedPoint.weekLabel} (Simulado)
-            </span>
-            <span className="font-mono font-extrabold text-emerald-800 text-sm">
-              {selectedMetric === 'presion' &&
-                `${Math.round(inspectedPoint.systolicBP)}/${Math.round(inspectedPoint.diastolicBP)} mmHg`}
-              {selectedMetric === 'pulsaciones' && `${Math.round(inspectedPoint.heartRate)} lpm`}
-              {selectedMetric === 'peso_masa' &&
-                `${inspectedPoint.bodyWeight} kg · IMC ${inspectedPoint.bodyMass}`}
-              {selectedMetric === 'vitalidad' && `${inspectedPoint.generalHealthScore}/100 pts`}
-            </span>
-          </div>
+        const inspRange =
+          selectedMetric === 'presion'
+            ? getMedicalMetricRange('systolic', inspectedPoint.systolicBP)
+            : selectedMetric === 'pulsaciones'
+              ? getMedicalMetricRange('heartRate', inspectedPoint.heartRate)
+              : selectedMetric === 'peso_masa'
+                ? getMedicalMetricRange('bmi', inspectedPoint.bodyMass)
+                : selectedMetric === 'higado_graso'
+                  ? getMedicalMetricRange('fattyLiver', Math.min(3, Math.floor((inspectedPoint.fattyLiverScore ?? 0) / 30)))
+                  : { status: 'normal', label: 'Óptimo', badgeClass: 'bg-emerald-50 text-emerald-800 border-emerald-200', textClass: 'text-emerald-700', dotClass: 'bg-emerald-500' };
 
-          <div className="text-right">
-            <span className="text-[10px] font-semibold uppercase text-slate-400 block">
-              Meta Clínica
-            </span>
-            <span className="font-mono font-bold text-slate-900 text-sm">
-              {selectedMetric === 'presion' &&
-                `${initialPoint.targetSystolic}/${initialPoint.targetDiastolic} mmHg`}
-              {selectedMetric === 'pulsaciones' && `${initialPoint.targetHeartRate} lpm`}
-              {selectedMetric === 'peso_masa' && `${initialPoint.targetWeight} kg`}
-              {selectedMetric === 'vitalidad' && `≥ 85/100`}
-            </span>
+        return (
+          <div className="grid grid-cols-3 gap-2.5 bg-slate-50/90 rounded-2xl p-3 border border-slate-200/70 text-xs">
+            <div>
+              <div className="flex items-center gap-1.5 mb-0.5">
+                <span className="text-[10px] font-semibold uppercase text-slate-400 block">
+                  Inicio (Hoy)
+                </span>
+                <span className={`w-2 h-2 rounded-full ${initRange.dotClass}`} title={initRange.label} />
+              </div>
+              <span className="font-mono font-bold text-slate-800 text-sm">
+                {selectedMetric === 'presion' &&
+                  `${Math.round(initialPoint.systolicBP)}/${Math.round(initialPoint.diastolicBP)} mmHg`}
+                {selectedMetric === 'pulsaciones' && `${Math.round(initialPoint.heartRate)} lpm`}
+                {selectedMetric === 'peso_masa' && `${initialPoint.bodyWeight} kg`}
+                {selectedMetric === 'vitalidad' && `${initialPoint.generalHealthScore}/100`}
+                {selectedMetric === 'higado_graso' && `${initialPoint.fattyLiverScore ?? 0}% Riesgo`}
+              </span>
+              <p className={`text-[10px] font-semibold ${initRange.textClass} mt-0.5`}>
+                {initRange.label}
+              </p>
+            </div>
+
+            <div className="border-x border-slate-200/80 px-3">
+              <div className="flex items-center gap-1.5 mb-0.5">
+                <span className="text-[10px] font-semibold uppercase text-emerald-700 block">
+                  {inspectedPoint.weekLabel} (Simulado)
+                </span>
+                <span className={`w-2 h-2 rounded-full ${inspRange.dotClass}`} title={inspRange.label} />
+              </div>
+              <span className="font-mono font-extrabold text-emerald-800 text-sm">
+                {selectedMetric === 'presion' &&
+                  `${Math.round(inspectedPoint.systolicBP)}/${Math.round(inspectedPoint.diastolicBP)} mmHg`}
+                {selectedMetric === 'pulsaciones' && `${Math.round(inspectedPoint.heartRate)} lpm`}
+                {selectedMetric === 'peso_masa' &&
+                  `${inspectedPoint.bodyWeight} kg · IMC ${inspectedPoint.bodyMass}`}
+                {selectedMetric === 'vitalidad' && `${inspectedPoint.generalHealthScore}/100 pts`}
+                {selectedMetric === 'higado_graso' && `${inspectedPoint.fattyLiverScore ?? 0}% Riesgo`}
+              </span>
+              <p className={`text-[10px] font-semibold ${inspRange.textClass} mt-0.5`}>
+                {inspRange.label}
+              </p>
+            </div>
+
+            <div className="text-right">
+              <span className="text-[10px] font-semibold uppercase text-slate-400 block mb-0.5">
+                Meta Clínica
+              </span>
+              <span className="font-mono font-bold text-slate-900 text-sm">
+                {selectedMetric === 'presion' &&
+                  `${initialPoint.targetSystolic}/${initialPoint.targetDiastolic} mmHg`}
+                {selectedMetric === 'pulsaciones' && `${initialPoint.targetHeartRate} lpm`}
+                {selectedMetric === 'peso_masa' && `${initialPoint.targetWeight} kg`}
+                {selectedMetric === 'vitalidad' && `≥ 85/100`}
+                {selectedMetric === 'higado_graso' && `≤ 10% (G0)`}
+              </span>
+              <p className="text-[10px] font-semibold text-emerald-700 mt-0.5">
+                Rango Saludable
+              </p>
+            </div>
           </div>
+        );
+      })()}
+
+      {/* Barra de Regresión Lineal OLS & Zona Fisiológica */}
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs pt-1">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setShowRegression((prev) => !prev)}
+            className={`px-2.5 py-1 rounded-xl text-[11px] font-bold flex items-center gap-1.5 transition-colors border ${
+              showRegression
+                ? 'bg-sky-50 text-sky-800 border-sky-300 shadow-2xs'
+                : 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200'
+            }`}
+          >
+            <LineChart className="w-3.5 h-3.5 text-sky-600" />
+            <span>Tendencia Lineal (OLS): {showRegression ? 'Visible' : 'Oculta'}</span>
+          </button>
+
+          {showRegression && chart.primarySeries.length > 1 && (() => {
+            const regPoints = chart.primarySeries.map((y, idx) => ({ x: idx, y }));
+            const reg = calculateSeriesLinearRegression(regPoints);
+            return (
+              <span className="text-[11px] font-mono text-slate-500 hidden sm:inline">
+                Pendiente: {reg.slope > 0 ? `+${reg.slope}` : reg.slope} {chart.unit}/sem · R²: {reg.rSquared}
+              </span>
+            );
+          })()}
         </div>
-      )}
+
+        {selectedMetric === 'pulsaciones' && (
+          <div className="flex items-center gap-1.5 text-[11px] text-emerald-800 bg-emerald-50/80 px-2.5 py-1 rounded-xl border border-emerald-200/70 font-semibold">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            <span>Zona Normal en Reposo: 60 - 80 lpm</span>
+          </div>
+        )}
+      </div>
 
       {/* Lienzo SVG Interactivo con Transición Suave en Tiempo Real */}
       <div className="relative w-full overflow-hidden rounded-2xl bg-gradient-to-b from-slate-50/60 to-white border border-slate-100 p-2">
@@ -341,6 +455,29 @@ export const DynamicProgressChart: React.FC<DynamicProgressChartProps> = ({
               <stop offset="100%" stopColor={chart.primaryColor} stopOpacity="0.01" />
             </linearGradient>
           </defs>
+
+          {/* Zona Fisiológica Óptima para Ritmo Cardíaco (60 - 80 lpm) */}
+          {selectedMetric === 'pulsaciones' && chart.minY <= 80 && chart.maxY >= 60 && (
+            <g>
+              <rect
+                x={padLeft}
+                y={Math.max(padTop, getY(80))}
+                width={plotW}
+                height={Math.min(plotH, Math.max(12, getY(60) - getY(80)))}
+                fill="#10b981"
+                fillOpacity="0.08"
+                rx="6"
+              />
+              <text
+                x={width - padRight - 8}
+                y={getY(70) + 3}
+                textAnchor="end"
+                className="fill-emerald-700/80 text-[9px] font-bold select-none"
+              >
+                Rango Óptimo Reposo (60-80 lpm)
+              </text>
+            </g>
+          )}
 
           {/* Líneas de cuadrícula horizontal */}
           {yTicks.map((tick, idx) => {
@@ -390,6 +527,30 @@ export const DynamicProgressChart: React.FC<DynamicProgressChartProps> = ({
               </text>
             </g>
           )}
+
+          {/* Recta de Regresión Lineal OLS (si está activada) */}
+          {showRegression && chart.primarySeries.length > 1 && (() => {
+            const regPoints = chart.primarySeries.map((y, idx) => ({ x: idx, y }));
+            const reg = calculateSeriesLinearRegression(regPoints);
+            const x1 = getX(0);
+            const y1 = getY(reg.predict(0));
+            const x2 = getX(chart.primarySeries.length - 1);
+            const y2 = getY(reg.predict(chart.primarySeries.length - 1));
+            return (
+              <g className="transition-all duration-300">
+                <line
+                  x1={x1}
+                  y1={y1}
+                  x2={x2}
+                  y2={y2}
+                  stroke="#0284c7"
+                  strokeWidth="2"
+                  strokeDasharray="5 4"
+                  strokeOpacity="0.8"
+                />
+              </g>
+            );
+          })()}
 
           {/* Área sombreada bajo la curva principal */}
           {chart.primarySeries.length > 1 && (

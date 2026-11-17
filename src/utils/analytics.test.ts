@@ -10,10 +10,13 @@ import {
 } from './analytics';
 import { AdminUser, Product, SaleRecord } from '../types/nutrivital';
 import {
+  calculateAge,
   calculateProjectedImpact,
+  calculateSeriesLinearRegression,
   generateDynamicBiometricTrend,
   generateNutritionalRecommendations,
   getBloodPressureCategory,
+  getMedicalMetricRange,
 } from './healthAnalytics';
 import { AVAILABLE_SUPPLEMENTS, INITIAL_PRODUCTS } from '../data/seedData';
 import { analyzeMedicalReportFile, parseTextLabMarkers } from './medicalReportAnalyzer';
@@ -353,4 +356,74 @@ test('analyzeMedicalReportFile correctly analyzes text files asynchronously', as
   assert.equal(analyzed.markers.vitaminD, 25);
   assert.equal(analyzed.detectedSystolicBP, 130);
   assert.equal(analyzed.detectedDiastolicBP, 84);
+});
+
+test('age-adjusted blood pressure & color-coded medical range evaluations work accurately', () => {
+  const age = calculateAge('1950-01-01');
+  assert.ok(age !== undefined && age >= 70);
+
+  // 126 mmHg systolic: borderline for young adult, normal for >= 65
+  const youngEval = getMedicalMetricRange('systolic', 126, 35);
+  const seniorEval = getMedicalMetricRange('systolic', 126, 72);
+  assert.equal(youngEval.status, 'borderline');
+  assert.equal(seniorEval.status, 'normal');
+
+  // Heart rate zones
+  assert.equal(getMedicalMetricRange('heartRate', 68).status, 'normal');
+  assert.equal(getMedicalMetricRange('heartRate', 88).status, 'borderline');
+  assert.equal(getMedicalMetricRange('heartRate', 105).status, 'critical');
+
+  // Fatty liver grading
+  assert.equal(getMedicalMetricRange('fattyLiver', 0).status, 'normal');
+  assert.equal(getMedicalMetricRange('fattyLiver', 1).status, 'borderline');
+  assert.equal(getMedicalMetricRange('fattyLiver', 2).status, 'critical');
+});
+
+test('calculateSeriesLinearRegression computes accurate OLS slope and R-squared', () => {
+  const reg = calculateSeriesLinearRegression([
+    { x: 0, y: 80 },
+    { x: 1, y: 78 },
+    { x: 2, y: 76 },
+    { x: 3, y: 74 },
+  ]);
+  assert.equal(reg.slope, -2);
+  assert.equal(reg.intercept, 80);
+  assert.equal(reg.rSquared, 1);
+  assert.equal(reg.predict(4), 72);
+});
+
+test('Coffee and Salt supplements exist and Fatty Liver recommendations trigger', () => {
+  const coffee = AVAILABLE_SUPPLEMENTS.find((s) => s.id === 'SUP-CAFE');
+  const salt = AVAILABLE_SUPPLEMENTS.find((s) => s.id === 'SUP-SAL');
+  assert.ok(coffee, 'Coffee supplement should exist');
+  assert.ok(salt, 'Salt supplement should exist');
+  assert.ok(coffee.heartRateEffect > 0);
+  assert.ok(salt.systolicEffect > 0);
+
+  const bio = {
+    systolicBP: 132,
+    diastolicBP: 84,
+    heartRate: 78,
+    bodyWeight: 85,
+    bodyMass: 27.5,
+    dailyCalories: 2400,
+    fattyLiverGrade: 2 as const,
+    lastUpdated: '2026-11-17',
+  };
+  const goals = {
+    targetSystolicBP: 120,
+    targetDiastolicBP: 80,
+    targetHeartRate: 68,
+    targetWeight: 78,
+    targetBodyMass: 24.5,
+    targetCalories: 2000,
+    timelineWeeks: 8,
+  };
+
+  const trend = generateDynamicBiometricTrend(bio, goals, [salt], 2400, 8);
+  assert.ok(trend[0].fattyLiverScore !== undefined && trend[0].fattyLiverScore > 0);
+
+  const recs = generateNutritionalRecommendations(bio, goals, [salt], 2400, INITIAL_PRODUCTS, trend, 'higado_graso', []);
+  assert.ok(recs.some((r) => r.id === 'rec-fatty-liver-protocol'), 'Should recommend fatty liver protocol');
+  assert.ok(recs.some((r) => r.id === 'rec-sodium-alert'), 'Should warn about active sodium/salt');
 });

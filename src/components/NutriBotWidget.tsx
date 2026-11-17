@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   MessageCircle,
   X,
@@ -7,28 +7,154 @@ import {
   ArrowUpRight,
   ChevronRight,
   ChevronLeft,
+  Loader2,
+  Sparkles,
 } from 'lucide-react';
-import { ChatMessage, ProductCategory } from '../types/nutrivital';
+import { ChatMessage, ClientUser, ProductCategory } from '../types/nutrivital';
 import { NUTRIBOT_QUICK_CHIPS } from '../data/seedData';
+import { calculateAge } from '../utils/healthAnalytics';
 
 interface NutriBotWidgetProps {
   onSelectCategory?: (category: ProductCategory) => void;
+  currentClient?: ClientUser | null;
+}
+
+const OFF_TOPIC_FALLBACK =
+  'No puedo responder esto, por favor escribe una solicitud coherente con la página.';
+
+const DOMAIN_KEYWORDS = [
+  'nutrivital', 'salud', 'suplemento', 'suplementos', 'proteina', 'proteína',
+  'matcha', 'omega', 'magnesio', 'ashwagandha', 'espirulina', 'colageno', 'colágeno',
+  'cafe', 'café', 'cafeina', 'cafeína', 'sal', 'sodio', 'potasio', 'vitamina',
+  'presion', 'presión', 'arterial', 'sistolica', 'sistólica', 'diastolica', 'diastólica',
+  'latidos', 'pulsaciones', 'ritmo', 'corazon', 'corazón', 'cardiaco', 'cardíaco',
+  'peso', 'imc', 'cintura', 'masa', 'vitalidad', 'higado', 'hígado', 'graso', 'esteatosis',
+  'glucosa', 'trigliceridos', 'triglicéridos', 'colesterol', 'ldl', 'hdl', 'creatinina',
+  'carrito', 'envio', 'envío', 'producto', 'productos', 'catalogo', 'catálogo', 'compra', 'precio',
+  'informe', 'analitica', 'analítica', 'pdf', 'txt', 'reporte', 'subir', 'descargar',
+  'dieta', 'caloria', 'caloría', 'calorias', 'calorías', 'nutricion', 'nutrición', 'meta', 'metas',
+  'energia', 'energía', 'cansancio', 'fatiga', 'keto', 'ceto', 'grasa', 'digestion', 'digestión',
+  'gluten', 'inflamacion', 'inflamación', 'adaptogeno', 'adaptógeno', 'superalimento',
+  'hola', 'buenos', 'buenas', 'gracias', 'ayuda', 'como', 'cómo', 'que', 'qué', 'cual', 'cuál', 'donde', 'dónde',
+];
+
+function evaluateLocalNutriBotFallback(
+  query: string,
+  client?: ClientUser | null
+): { text: string; category?: ProductCategory } {
+  const lower = query
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+  // Check if query belongs to NutriVital / Health domain
+  const isGreetingOnly = /^(hola|buenos dias|buenas tardes|buenas noches|hi|hello|gracias|ok|vale)[!?. ]*$/i.test(lower);
+  if (isGreetingOnly) {
+    return {
+      text: `¡Hola${client ? ` ${client.name.split(' ')[0]}` : ''}! Estoy listo para ayudarte con dudas sobre nuestros suplementos (Omega-3, Matcha, Café, Sal, Ashwagandha), tus biomarcadores (presión, pulsaciones, hígado graso) o tus pedidos en NutriVital.`,
+    };
+  }
+
+  const hasDomainMatch = DOMAIN_KEYWORDS.some((kw) => {
+    const cleanKw = kw.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    return lower.includes(cleanKw);
+  });
+
+  if (!hasDomainMatch) {
+    return { text: OFF_TOPIC_FALLBACK };
+  }
+
+  if (lower.includes('higado') || lower.includes('graso') || lower.includes('esteatosis') || lower.includes('triglicerido')) {
+    const grade = client?.biometrics.fattyLiverGrade ?? 0;
+    return {
+      text: `Respecto a la salud hepática${client ? ` (tu registro actual indica Hígado Graso Grado ${grade})` : ''}, recomendamos reducir azúcares simples, limitar la sal añadida y activar Omega-3 Vegano EPA+DHA junto con café funcional moderado por sus polifenoles hepatoprotectores.`,
+      category: 'Suplementos Naturales',
+    };
+  }
+
+  if (lower.includes('cafe') || lower.includes('cafeina')) {
+    return {
+      text: 'El Café Funcional Orgánico aumenta el gasto calórico (+80 kcal/día) y protege el hígado, pero puede elevar transitoriamente +4 mmHg la presión y +6 lpm el pulso. Si tienes hipertensión o taquicardia, te sugerimos moderar la dosis y apoyarte con Magnesio o Ashwagandha KSM-66.',
+      category: 'Suplementos Naturales',
+    };
+  }
+
+  if (lower.includes('sal') || lower.includes('sodio') || lower.includes('presion')) {
+    const bp = client ? `${client.biometrics.systolicBP}/${client.biometrics.diastolicBP} mmHg` : 'tu presión actual';
+    return {
+      text: `Para optimizar la presión arterial (${bp}), es crucial moderar el consumo de sal refinada (que añade hasta +6 mmHg sistólicos) y equilibrar con Citrato de Potasio, Magnesio Bisglicinato y Omega-3 EPA+DHA.`,
+      category: 'Suplementos Naturales',
+    };
+  }
+
+  if (lower.includes('pulso') || lower.includes('pulsacion') || lower.includes('latido') || lower.includes('ritmo') || lower.includes('corazon')) {
+    const hr = client ? `${client.biometrics.heartRate} lpm` : '60-80 lpm';
+    return {
+      text: `El rango normal en reposo es 60 a 80 lpm (tu registro: ${hr}). Puedes optimizar tu curva de pulsaciones reduciendo estimulantes nocturnos y activando Extracto KSM-66 Ashwagandha en la simulación.`,
+      category: 'Suplementos Naturales',
+    };
+  }
+
+  if (lower.includes('energ') || lower.includes('cansan') || lower.includes('fatiga')) {
+    return {
+      text: 'Para elevar tu energía celular sin nerviosismo, te recomendamos el Elixir Adaptógeno Cacao & Maca Negra junto con la Espirulina Azul por las mañanas.',
+      category: 'Superalimentos',
+    };
+  }
+
+  if (lower.includes('grasa') || lower.includes('peso') || lower.includes('imc') || lower.includes('keto') || lower.includes('ceto')) {
+    return {
+      text: 'Para planes de control de peso, IMC y metabolismo lipídico, nuestras Barras Ceto de Macadamia y la Proteína Bio-Activa Matcha sin azúcar aportan saciedad y protegen la masa magra.',
+      category: 'Snacks Orgánicos',
+    };
+  }
+
+  if (lower.includes('informe') || lower.includes('pdf') || lower.includes('txt') || lower.includes('reporte') || lower.includes('analitica')) {
+    return {
+      text: 'En la sección "Mi Salud & Biometría" puedes subir informes médicos (.PDF, .TXT o imagen). Nuestra IA extraerá biomarcadores clave y podrás descargar tus reportes formateados en .TXT y .PDF.',
+    };
+  }
+
+  if (lower.includes('meta') || lower.includes('objetivo')) {
+    return {
+      text: 'Por protocolo clínico de NutriVital, las metas terapéuticas son calibradas exclusivamente por el equipo de nutrición en el Panel Administrador para garantizar tu seguridad médica.',
+    };
+  }
+
+  if (lower.includes('envio') || lower.includes('carrito') || lower.includes('compra') || lower.includes('precio')) {
+    return {
+      text: 'Despachamos en 24h hábiles con empaque eco-térmico. El envío estándar cuesta $6.50 USD y es GRATIS en pedidos superiores a $90.00 USD. Puedes gestionar tus artículos desde el botón Carrito arriba a la derecha.',
+      category: 'Batidos Proteicos',
+    };
+  }
+
+  return {
+    text: 'En NutriVital combinamos superalimentos, proteínas germinadas y analítica biométrica en tiempo real. Puedes preguntarme sobre cualquiera de nuestros productos, tus rangos médicos (presión, pulsaciones, hígado graso) o sobre tu perfil clínico.',
+    category: 'Batidos Proteicos',
+  };
 }
 
 export const NutriBotWidget: React.FC<NutriBotWidgetProps> = ({
   onSelectCategory,
+  currentClient,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [isFolded, setIsFolded] = useState(false);
   const [inputValue, setInputValue] = useState('');
+  const [isTyping, setIsTyping] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: 'welcome-1',
       sender: 'bot',
-      text: '¡Hola! Soy tu asistente de nutrición. ¿Buscas recomendaciones para energía, pérdida de grasa o digestión?',
+      text: '¡Hola! Soy NutriBot IA. Pregúntame únicamente sobre productos NutriVital, suplementos (como Omega-3, Café o Sal), tu biometría o informes médicos.',
       timestamp: 'Ahora',
     },
   ]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, isTyping]);
 
   const handleChipClick = (chip: (typeof NUTRIBOT_QUICK_CHIPS)[number]) => {
     const now = new Date().toLocaleTimeString('es-ES', {
@@ -54,10 +180,10 @@ export const NutriBotWidget: React.FC<NutriBotWidgetProps> = ({
     setMessages((prev) => [...prev, userMsg, botMsg]);
   };
 
-  const handleSendMessage = (e: React.FormEvent) => {
+  const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = inputValue.trim();
-    if (!trimmed) return;
+    if (!trimmed || isTyping) return;
 
     const now = new Date().toLocaleTimeString('es-ES', {
       hour: '2-digit',
@@ -71,35 +197,60 @@ export const NutriBotWidget: React.FC<NutriBotWidgetProps> = ({
       timestamp: now,
     };
 
-    const lower = trimmed.toLowerCase();
-    let replyText =
-      'Gracias por tu consulta. En esta versión interactiva de NutriVital te sugerimos combinar nuestra Proteína Bio-Activa Matcha con Omega-3 Vegano para optimizar tu metabolismo diario.';
-    let category: ProductCategory | undefined = undefined;
+    setMessages((prev) => [...prev, userMsg]);
+    setInputValue('');
+    setIsTyping(true);
 
-    if (lower.includes('energ') || lower.includes('cansan') || lower.includes('fatiga')) {
-      replyText =
-        'Para elevar tu energía celular sin nerviosismo, te recomendamos el Elixir Adaptógeno Cacao & Maca Negra junto con la Espirulina Azul por las mañanas.';
-      category = 'Superalimentos';
-    } else if (lower.includes('grasa') || lower.includes('peso') || lower.includes('keto') || lower.includes('ceto')) {
-      replyText =
-        'Para planes de pérdida de grasa y control glucémico, nuestras Barras Ceto de Macadamia y la Proteína Matcha sin azúcar aportan saciedad prolongada.';
-      category = 'Snacks Orgánicos';
-    } else if (lower.includes('dige') || lower.includes('inflam') || lower.includes('gluten')) {
-      replyText =
-        'Para mejorar la digestión y reducir marcadores inflamatorios, prueba la Granola Germinada de Chía y el Omega-3 Vegano EPA+DHA.';
-      category = 'Suplementos Naturales';
+    try {
+      const userContext = currentClient
+        ? {
+            name: currentClient.name,
+            age: calculateAge(currentClient.dateOfBirth),
+            gender: currentClient.gender,
+            biometrics: currentClient.biometrics,
+            activeSupplements: currentClient.activeSupplements,
+          }
+        : undefined;
+
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: trimmed, userContext }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const botMsg: ChatMessage = {
+          id: `bot-${Date.now() + 1}`,
+          sender: 'bot',
+          text: data.reply || OFF_TOPIC_FALLBACK,
+          timestamp: new Date().toLocaleTimeString('es-ES', {
+            hour: '2-digit',
+            minute: '2-digit',
+          }),
+        };
+        setMessages((prev) => [...prev, botMsg]);
+        setIsTyping(false);
+        return;
+      }
+    } catch {
+      // Fallback to local strict domain validator
     }
 
+    const fallback = evaluateLocalNutriBotFallback(trimmed, currentClient);
     const botMsg: ChatMessage = {
       id: `bot-${Date.now() + 1}`,
       sender: 'bot',
-      text: replyText,
-      timestamp: now,
-      recommendedCategory: category,
+      text: fallback.text,
+      timestamp: new Date().toLocaleTimeString('es-ES', {
+        hour: '2-digit',
+        minute: '2-digit',
+      }),
+      recommendedCategory: fallback.category,
     };
 
-    setMessages((prev) => [...prev, userMsg, botMsg]);
-    setInputValue('');
+    setMessages((prev) => [...prev, botMsg]);
+    setIsTyping(false);
   };
 
   if (isFolded) {
@@ -131,19 +282,31 @@ export const NutriBotWidget: React.FC<NutriBotWidgetProps> = ({
           {/* Header */}
           <div className="bg-emerald-700 text-white px-4 py-3.5 flex items-center justify-between">
             <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-xl bg-emerald-600 flex items-center justify-center">
+              <div className="w-8 h-8 rounded-xl bg-emerald-600 flex items-center justify-center relative">
                 <Leaf className="w-4 h-4 text-[#86EFAC]" />
+                <Sparkles className="w-2.5 h-2.5 text-amber-300 absolute -top-1 -right-1" />
               </div>
               <div>
                 <h3 className="text-sm font-bold leading-tight">
-                  NutriBot - Asistente Virtual
+                  NutriBot IA Clínico
                 </h3>
                 <p className="text-[11px] text-emerald-100">
-                  Asesoría Nutricional Interactiva
+                  Asistente NutriVital · Dominio Restringido
                 </p>
               </div>
             </div>
             <div className="flex items-center gap-1">
+              <a
+                href="https://wa.me/15550192834?text=Hola%20NutriVital,%20deseo%20asesor%C3%ADa%20nutricional"
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Chatear con un especialista por WhatsApp"
+                className="p-1.5 rounded-lg bg-[#25D366]/20 text-[#86EFAC] hover:bg-[#25D366] hover:text-white transition-colors"
+              >
+                <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12.031 2c-5.516 0-9.969 4.453-9.969 9.969 0 1.766.469 3.484 1.344 5l-1.406 5.156 5.281-1.375c1.469.797 3.109 1.219 4.75 1.219 5.516 0 9.969-4.453 9.969-9.969S17.547 2 12.031 2zm5.813 14.125c-.25.703-1.438 1.344-2 1.422-.516.078-1.188.141-3.344-.75-2.672-1.094-4.391-3.828-4.516-4-.125-.172-1.078-1.438-1.078-2.734s.672-1.938.922-2.203c.25-.266.547-.328.734-.328s.375.016.531.016c.172 0 .406-.063.641.484.25.578.844 2.063.922 2.219.078.156.125.344.016.563-.109.219-.156.344-.313.531-.156.188-.328.406-.469.547-.156.156-.328.328-.141.641.188.313.844 1.391 1.813 2.25 1.25 1.109 2.297 1.453 2.609 1.609.313.156.5.125.688-.094.188-.219.813-.953 1.031-1.281.219-.328.438-.281.734-.172.297.109 1.891.891 2.219 1.047.328.156.547.234.625.359.078.125.078.734-.172 1.438z" />
+                </svg>
+              </a>
               <button
                 type="button"
                 onClick={() => {
@@ -204,6 +367,15 @@ export const NutriBotWidget: React.FC<NutriBotWidgetProps> = ({
                 </span>
               </div>
             ))}
+            {isTyping && (
+              <div className="flex items-start">
+                <div className="bg-white text-emerald-700 border border-emerald-200 rounded-2xl rounded-bl-xs px-3.5 py-2 text-xs flex items-center gap-2 shadow-2xs">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>NutriBot está analizando...</span>
+                </div>
+              </div>
+            )}
+            <div ref={messagesEndRef} />
           </div>
 
           {/* Quick Suggestion Chips */}

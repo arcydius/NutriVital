@@ -2,6 +2,9 @@ import {
   BiometricTrendPoint,
   ClientBiometrics,
   ClientHealthGoals,
+  MedicalLabMarkers,
+  MedicalRangeEvaluation,
+  MedicalRangeStatus,
   MedicalReportRecord,
   NutritionRecommendation,
   Product,
@@ -9,17 +12,280 @@ import {
   SupplementItem,
 } from '../types/nutrivital';
 
-export type ChartMetricFocus = 'presion' | 'pulsaciones' | 'peso_masa' | 'vitalidad';
+export type ChartMetricFocus =
+  | 'presion'
+  | 'pulsaciones'
+  | 'peso_masa'
+  | 'vitalidad'
+  | 'higado_graso';
+
+export function calculateAge(dob?: string): number | undefined {
+  if (!dob) return undefined;
+  const birth = new Date(dob);
+  if (isNaN(birth.getTime())) return undefined;
+  const today = new Date();
+  let age = today.getFullYear() - birth.getFullYear();
+  const m = today.getMonth() - birth.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) {
+    age--;
+  }
+  return Math.max(0, age);
+}
 
 export function getBloodPressureCategory(
   systolic: number,
-  diastolic: number
+  diastolic: number,
+  age?: number
 ): 'Óptima' | 'Normal' | 'Elevada' | 'Hipertensión E1' | 'Hipertensión E2' {
+  // Ajuste según edad: a partir de 65 años, la rigidez arterial fisiológica tolera valores hasta 129 mmHg sin ser hipertensión
+  if (age !== undefined && age >= 65) {
+    if (systolic >= 160 || diastolic >= 100) return 'Hipertensión E2';
+    if (systolic >= 140 || diastolic >= 90) return 'Hipertensión E1';
+    if (systolic >= 130 || (diastolic >= 80 && diastolic < 90)) return 'Elevada';
+    if (systolic >= 120 && diastolic < 80) return 'Normal';
+    return 'Óptima';
+  }
+
+  // Adultos menores de 65 años (criterios clínicos AHA / ACC)
   if (systolic >= 160 || diastolic >= 100) return 'Hipertensión E2';
   if (systolic >= 140 || diastolic >= 90) return 'Hipertensión E1';
   if (systolic >= 130 || (diastolic >= 80 && diastolic < 90)) return 'Elevada';
   if (systolic >= 120 && diastolic < 80) return 'Normal';
   return 'Óptima';
+}
+
+export function getMedicalMetricRange(
+  metric:
+    | 'systolic'
+    | 'diastolic'
+    | 'heartRate'
+    | 'bmi'
+    | 'glucose'
+    | 'triglycerides'
+    | 'ldl'
+    | 'vitaminD'
+    | 'potassium'
+    | 'fattyLiver',
+  value: number,
+  age?: number,
+  _gender?: string
+): MedicalRangeEvaluation {
+  let status: MedicalRangeStatus = 'normal';
+  let label = 'Normal / Óptimo';
+
+  switch (metric) {
+    case 'systolic':
+      if (age !== undefined && age >= 65) {
+        if (value >= 140) {
+          status = 'critical';
+          label = 'Hipertensión (≥140)';
+        } else if (value >= 130) {
+          status = 'borderline';
+          label = 'Elevada para edad (130-139)';
+        } else {
+          status = 'normal';
+          label = 'Normal (<130)';
+        }
+      } else {
+        if (value >= 130) {
+          status = 'critical';
+          label = 'Elevada / HTA (≥130)';
+        } else if (value >= 120) {
+          status = 'borderline';
+          label = 'Limítrofe (120-129)';
+        } else {
+          status = 'normal';
+          label = 'Óptima (<120)';
+        }
+      }
+      break;
+
+    case 'diastolic':
+      if (value >= 90) {
+        status = 'critical';
+        label = 'HTA Diastólica (≥90)';
+      } else if (value >= 80) {
+        status = 'borderline';
+        label = 'Limítrofe (80-89)';
+      } else {
+        status = 'normal';
+        label = 'Óptima (<80)';
+      }
+      break;
+
+    case 'heartRate':
+      if (value >= 100 || value < 50) {
+        status = 'critical';
+        label = value >= 100 ? 'Taquicardia (≥100)' : 'Bradicardia (<50)';
+      } else if (value > 80 || (value >= 50 && value < 60)) {
+        status = 'borderline';
+        label = value > 80 ? 'Elevado (81-99 lpm)' : 'Bajo / Reposo atlético';
+      } else {
+        status = 'normal';
+        label = 'Normal (60-80 lpm)';
+      }
+      break;
+
+    case 'bmi':
+      if (value >= 30 || value < 18.5) {
+        status = 'critical';
+        label = value >= 30 ? 'Obesidad (≥30)' : 'Bajo peso (<18.5)';
+      } else if (value >= 25) {
+        status = 'borderline';
+        label = 'Sobrepeso (25-29.9)';
+      } else {
+        status = 'normal';
+        label = 'Normopeso (18.5-24.9)';
+      }
+      break;
+
+    case 'glucose':
+      if (value >= 126 || value < 70) {
+        status = 'critical';
+        label = value >= 126 ? 'Alerta Hiperglucemia' : 'Hipoglucemia (<70)';
+      } else if (value >= 100) {
+        status = 'borderline';
+        label = 'Glucosa alterada (100-125)';
+      } else {
+        status = 'normal';
+        label = 'Normal (70-99 mg/dL)';
+      }
+      break;
+
+    case 'triglycerides':
+      if (value >= 200) {
+        status = 'critical';
+        label = 'Hipertrigliceridemia (≥200)';
+      } else if (value >= 150) {
+        status = 'borderline';
+        label = 'Límite Alto (150-199)';
+      } else {
+        status = 'normal';
+        label = 'Óptimo (<150 mg/dL)';
+      }
+      break;
+
+    case 'ldl':
+      if (value >= 160) {
+        status = 'critical';
+        label = 'LDL Alto (≥160)';
+      } else if (value >= 100) {
+        status = 'borderline';
+        label = 'Límite (100-159)';
+      } else {
+        status = 'normal';
+        label = 'Óptimo (<100 mg/dL)';
+      }
+      break;
+
+    case 'vitaminD':
+      if (value < 20) {
+        status = 'critical';
+        label = 'Deficiencia (<20 ng/mL)';
+      } else if (value < 30) {
+        status = 'borderline';
+        label = 'Insuficiencia (20-29)';
+      } else {
+        status = 'normal';
+        label = 'Suficiente (≥30 ng/mL)';
+      }
+      break;
+
+    case 'potassium':
+      if (value > 5.2 || value < 3.5) {
+        status = 'critical';
+        label = value > 5.2 ? 'Hiperpotasemia' : 'Hipopotasemia';
+      } else {
+        status = 'normal';
+        label = 'Equilibrado (3.5-5.1)';
+      }
+      break;
+
+    case 'fattyLiver':
+      if (value >= 2) {
+        status = 'critical';
+        label = value === 3 ? 'Esteatosis Severa (G3)' : 'Esteatosis Moderada (G2)';
+      } else if (value === 1) {
+        status = 'borderline';
+        label = 'Esteatosis Leve (G1)';
+      } else {
+        status = 'normal';
+        label = 'Sin Esteatosis / Sano (G0)';
+      }
+      break;
+  }
+
+  const badgeClass =
+    status === 'normal'
+      ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+      : status === 'borderline'
+        ? 'bg-amber-50 text-amber-800 border-amber-200'
+        : 'bg-rose-50 text-rose-800 border-rose-200';
+
+  const textClass =
+    status === 'normal'
+      ? 'text-emerald-700'
+      : status === 'borderline'
+        ? 'text-amber-700'
+        : 'text-rose-700';
+
+  const dotClass =
+    status === 'normal'
+      ? 'bg-emerald-500'
+      : status === 'borderline'
+        ? 'bg-amber-500'
+        : 'bg-rose-500';
+
+  return { status, label, badgeClass, textClass, dotClass };
+}
+
+export function calculateSeriesLinearRegression(points: { x: number; y: number }[]): {
+  slope: number;
+  intercept: number;
+  rSquared: number;
+  predict: (x: number) => number;
+} {
+  const n = points.length;
+  if (n <= 1) {
+    return {
+      slope: 0,
+      intercept: points[0]?.y ?? 0,
+      rSquared: 0,
+      predict: () => points[0]?.y ?? 0,
+    };
+  }
+
+  const sumX = points.reduce((acc, p) => acc + p.x, 0);
+  const sumY = points.reduce((acc, p) => acc + p.y, 0);
+  const meanX = sumX / n;
+  const meanY = sumY / n;
+
+  let numerator = 0;
+  let denominator = 0;
+  for (const p of points) {
+    numerator += (p.x - meanX) * (p.y - meanY);
+    denominator += Math.pow(p.x - meanX, 2);
+  }
+
+  const slope = denominator === 0 ? 0 : numerator / denominator;
+  const intercept = meanY - slope * meanX;
+
+  let ssTot = 0;
+  let ssRes = 0;
+  for (const p of points) {
+    const pred = slope * p.x + intercept;
+    ssTot += Math.pow(p.y - meanY, 2);
+    ssRes += Math.pow(p.y - pred, 2);
+  }
+
+  const rSquared = ssTot === 0 ? 1 : Math.max(0, 1 - ssRes / ssTot);
+
+  return {
+    slope: Number(slope.toFixed(3)),
+    intercept: Number(intercept.toFixed(2)),
+    rSquared: Number(rSquared.toFixed(3)),
+    predict: (x: number) => Number((slope * x + intercept).toFixed(1)),
+  };
 }
 
 export function calculateBMI(weightKg: number, heightCm: number): number {
@@ -81,7 +347,7 @@ export function calculateProjectedImpact(
   selectedSupplements: SupplementItem[],
   simulatedCalories: number,
   weeks: number = 8
-): ProjectedImpactSummary & { waistDelta: number; whtr: number; whtrStatus: string } {
+): ProjectedImpactSummary & { waistDelta: number; whtr: number; whtrStatus: string; hepaticRiskScore: number } {
   const weeksClamped = Math.max(1, Math.min(24, weeks));
   const heightCm = biometrics.height || 170;
   const waistCm = biometrics.waistCircumference || 80;
@@ -173,6 +439,28 @@ export function calculateProjectedImpact(
     trendDirection = 'deteriorating';
   }
 
+  // Proyección de Hígado Graso (esteatosis hepática)
+  const initialGrade = biometrics.fattyLiverGrade ?? 0;
+  const hasOmega = selectedSupplements.some((s) => s.id === 'SUP-OMEGA3');
+  const hasCoffee = selectedSupplements.some((s) => s.id === 'SUP-CAFE');
+  const hasSalt = selectedSupplements.some((s) => s.id === 'SUP-SAL');
+
+  let hepaticRiskScore = initialGrade * 30; // base score 0..90
+  if (totalWeightDelta < -2) hepaticRiskScore -= 15;
+  if (totalWeightDelta > 2) hepaticRiskScore += 20;
+  if (hasOmega) hepaticRiskScore -= 12;
+  if (hasCoffee) hepaticRiskScore -= 8; // Efecto hepatoprotector comprobado de ácidos clorogénicos
+  if (hasSalt) hepaticRiskScore += 12;
+  if (projectedWhtr > 0.55) hepaticRiskScore += 15;
+  hepaticRiskScore = Math.max(0, Math.min(100, Math.round(hepaticRiskScore)));
+
+  let fattyLiverRisk: 'Bajo / Normal' | 'Riesgo Moderado' | 'Esteatosis Activa' = 'Bajo / Normal';
+  if (hepaticRiskScore >= 55) {
+    fattyLiverRisk = 'Esteatosis Activa';
+  } else if (hepaticRiskScore >= 25) {
+    fattyLiverRisk = 'Riesgo Moderado';
+  }
+
   return {
     systolicDelta: totalSystolicDelta,
     diastolicDelta: totalDiastolicDelta,
@@ -187,6 +475,8 @@ export function calculateProjectedImpact(
     waistDelta,
     whtr: projectedWhtr,
     whtrStatus,
+    fattyLiverRisk,
+    hepaticRiskScore,
   };
 }
 
@@ -225,6 +515,8 @@ export function generateDynamicBiometricTrend(
     : biometrics.bodyMass || 24;
   const baselineWhtr = calculateWHtR(waistCm, heightCm);
 
+  const initialFattyScore = (biometrics.fattyLiverGrade ?? 0) * 30;
+
   for (const w of milestones) {
     if (w === 0) {
       points.push({
@@ -243,11 +535,13 @@ export function generateDynamicBiometricTrend(
           0,
           baselineWhtr
         ),
+        fattyLiverScore: initialFattyScore,
         targetSystolic: goals.targetSystolicBP,
         targetDiastolic: goals.targetDiastolicBP,
         targetHeartRate: goals.targetHeartRate,
         targetWeight: goals.targetWeight,
         targetBodyMass: goals.targetBodyMass,
+        targetFattyLiverScore: 10,
       });
       continue;
     }
@@ -276,6 +570,11 @@ export function generateDynamicBiometricTrend(
       curWhtr
     );
 
+    const curFatty = Math.max(
+      0,
+      Math.min(100, Math.round(initialFattyScore + (impact.hepaticRiskScore - initialFattyScore) * adaptationCurve))
+    );
+
     points.push({
       week: w,
       weekLabel: `Sem ${w}`,
@@ -285,11 +584,13 @@ export function generateDynamicBiometricTrend(
       bodyWeight: curWeight,
       bodyMass: curMass,
       generalHealthScore: curScore,
+      fattyLiverScore: curFatty,
       targetSystolic: goals.targetSystolicBP,
       targetDiastolic: goals.targetDiastolicBP,
       targetHeartRate: goals.targetHeartRate,
       targetWeight: goals.targetWeight,
       targetBodyMass: goals.targetBodyMass,
+      targetFattyLiverScore: 10,
     });
   }
 
@@ -610,6 +911,60 @@ export function generateNutritionalRecommendations(
       relatedSupplementId: fallbackSupp,
       chartMetricTrigger: 'vitalidad',
       metricEvidence: `Score: ${initialPt.generalHealthScore}/100 → ${finalPt.generalHealthScore}/100`,
+    });
+  }
+
+  // =========================================================================
+  // 5. ANÁLISIS DE HÍGADO GRASO (ESTEATOSIS HEPÁTICA) & TRIGLICÉRIDOS
+  // =========================================================================
+  const hasFattyLiver =
+    (biometrics.fattyLiverGrade !== undefined && biometrics.fattyLiverGrade >= 1) ||
+    (consolidatedMarkers.triglycerides !== undefined && consolidatedMarkers.triglycerides >= 150);
+  if (hasFattyLiver) {
+    const hasOmega = activeIds.has('SUP-OMEGA3');
+    recs.push({
+      id: 'rec-fatty-liver-protocol',
+      category: 'higado',
+      urgency: (biometrics.fattyLiverGrade && biometrics.fattyLiverGrade >= 2) ? 'alta' : 'media',
+      title: `Protocolo Hepatoprotector & Modulación de Grasa Hepática (Grado ${biometrics.fattyLiverGrade || 1})`,
+      message: 'Se detecta esteatosis hepática / elevación de triglicéridos. Los ácidos grasos poliinsaturados EPA+DHA de microalgas reducen la lipogénesis de novo en hepatocitos, mientras que la restricción de azúcares libres y el café orgánico favorecen la autofagia hepática.',
+      suggestedAction: hasOmega ? 'Mantener Omega-3 EPA+DHA y reducir carbohidratos refinados' : 'Activar Omega-3 Microalgas para proteger la función hepática',
+      relatedProductId: omegaProd?.id || 'NV-104',
+      relatedSupplementId: 'SUP-OMEGA3',
+      chartMetricTrigger: 'higado_graso',
+      metricEvidence: `Esteatosis G${biometrics.fattyLiverGrade || 1} · Triglicéridos: ${consolidatedMarkers.triglycerides || '150+'} mg/dL`,
+    });
+  }
+
+  // =========================================================================
+  // 6. ANÁLISIS DE SODIO / SAL & CAFEÍNA
+  // =========================================================================
+  if (activeIds.has('SUP-SAL')) {
+    recs.push({
+      id: 'rec-sodium-alert',
+      category: 'alerta',
+      urgency: 'alta',
+      title: 'Sobrecarga de Sodio Activa (Impacto en Rigidez Arterial)',
+      message: 'El consumo elevado de sal (>5g/día) expande el volumen plasmático y contrarresta los vasodilatadores. Se recomienda restringir la sal agregada y balancear con Citrato de Potasio.',
+      suggestedAction: 'Moderar ingesta de sodio y compensar con citrato de potasio',
+      relatedSupplementId: 'SUP-POTASIO_ELECTRO',
+      chartMetricTrigger: 'presion',
+      metricEvidence: 'Sal activa en simulación: +6 mmHg sistólica proyectada',
+    });
+  }
+
+  if (activeIds.has('SUP-CAFE') && (finalPt.heartRate >= 80 || finalPt.systolicBP >= 135)) {
+    recs.push({
+      id: 'rec-caffeine-timing',
+      category: 'pulsaciones',
+      urgency: 'media',
+      title: 'Ventana de Cafeína & Tono Simpático',
+      message: 'El café funcional aporta polifenoles y protección hepática, pero su efecto estimulante eleva transitoriamente la FC y PA. Consúmelo antes de las 14:00 y acompáñalo de magnesio o ashwagandha para amortiguar el pico adrenérgico.',
+      suggestedAction: 'Consumir café matutino y amortiguar con KSM-66 Ashwagandha',
+      relatedProductId: ashwaProd?.id || 'NV-108',
+      relatedSupplementId: 'SUP-ASHWAGANDHA',
+      chartMetricTrigger: 'pulsaciones',
+      metricEvidence: 'Café activo en simulación: +6 lpm ritmo cardíaco',
     });
   }
 

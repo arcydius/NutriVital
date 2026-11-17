@@ -7,6 +7,7 @@ import {
 } from '../types/nutrivital';
 import { AVAILABLE_SUPPLEMENTS } from '../data/seedData';
 import {
+  calculateAge,
   calculateProjectedImpact,
   generateDynamicBiometricTrend,
   generateNutritionalRecommendations,
@@ -160,8 +161,13 @@ export const HealthAnalyticsSection: React.FC<HealthAnalyticsSectionProps> = ({
                   )}
                 </div>
                 <div className="text-xs text-slate-500 font-mono mt-0.5">
+                  {calculateAge(currentClient.dateOfBirth) !== undefined
+                    ? `${calculateAge(currentClient.dateOfBirth)} años · `
+                    : ''}
+                  {currentClient.gender ? `${currentClient.gender} · ` : ''}
                   {currentClient.biometrics.systolicBP}/{currentClient.biometrics.diastolicBP} mmHg ·{' '}
-                  {currentClient.biometrics.heartRate} lpm · {currentClient.biometrics.bodyWeight} kg
+                  {currentClient.biometrics.heartRate} lpm · {currentClient.biometrics.bodyWeight} kg ·{' '}
+                  Hígado G{currentClient.biometrics.fattyLiverGrade ?? 0}
                 </div>
               </div>
             </div>
@@ -172,7 +178,7 @@ export const HealthAnalyticsSection: React.FC<HealthAnalyticsSectionProps> = ({
               className="px-3.5 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-bold transition-colors flex items-center gap-1.5"
             >
               <Edit3 className="w-3.5 h-3.5" />
-              <span>Editar Biometría & Metas</span>
+              <span>Editar Mi Biometría</span>
             </button>
           </div>
         </div>

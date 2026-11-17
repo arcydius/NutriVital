@@ -106,6 +106,63 @@ export default defineConfig(({ mode }) => {
               res.end(JSON.stringify({ error: 'Error analizando el documento con Gemini' }));
             }
           });
+
+          server.middlewares.use('/api/chat', async (req, res) => {
+            if (req.method !== 'POST') {
+              res.statusCode = 405;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ error: 'Method not allowed' }));
+              return;
+            }
+
+            if (!apiKey) {
+              res.statusCode = 503;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ error: 'GEMINI_API_KEY no configurada' }));
+              return;
+            }
+
+            try {
+              const chunks: Buffer[] = [];
+              for await (const chunk of req) {
+                chunks.push(Buffer.from(chunk));
+              }
+              const { message, userContext } = JSON.parse(
+                Buffer.concat(chunks).toString('utf-8')
+              );
+
+              const ai = new GoogleGenAI({ apiKey });
+              const systemPrompt = `Eres NutriBot, el asistente clínico virtual oficial de la plataforma NutriVital (nutrición funcional, biomarcadores, suplementación y salud celular).
+REGLA ESTRICTA DE DOMINIO:
+Solo puedes responder preguntas sobre:
+1. Productos y catálogo de NutriVital (Proteína Bio-Activa Matcha, Espirulina Azul, Barras Ceto, Omega-3 Vegano EPA+DHA, Elixir Adaptógeno, Colágeno Marino, Granola Germinada, Extracto KSM-66 Ashwagandha).
+2. Suplementos y simulaciones en NutriVital (Omega-3, Magnesio, Ashwagandha, Espirulina, Matcha, CoQ10, Colágeno, Vitamina D3+K2, Citrato de Potasio, Café Funcional, Sal/Sodio).
+3. Salud, datos biométricos y analíticas médicas del usuario (Presión arterial según edad, pulsaciones/ritmo cardíaco, peso, IMC, cintura, vitalidad celular, hígado graso/esteatosis hepática, glucosa, triglicéridos, colesterol LDL, vitamina D, potasio).
+4. Uso de NutriVital (carrito, envíos eco-térmicos, subida/descarga de informes médicos en PDF/TXT).
+
+SI EL USUARIO PREGUNTA SOBRE CUALQUIER OTRO TEMA AJENO A LA PÁGINA O LA SALUD NUTRICIONAL (como programación, política, deportes, historia, clima, matemáticas, películas, chistes, tareas escolares, etc.), RESPONDE ÚNICA Y EXACTAMENTE CON ESTA FRASE:
+"No puedo responder esto, por favor escribe una solicitud coherente con la página."
+
+Contexto actual del paciente en sesión: ${JSON.stringify(userContext || {})}
+Responde en español de forma concisa, clínica y amable.`;
+
+              const response = await ai.models.generateContent({
+                model: 'gemini-2.5-flash',
+                contents: [
+                  { role: 'user', parts: [{ text: `${systemPrompt}\n\nConsulta del usuario: ${message}` }] },
+                ],
+              });
+
+              res.statusCode = 200;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ reply: response.text }));
+            } catch (error) {
+              console.error('Error en /api/chat:', error);
+              res.statusCode = 500;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ error: 'Error consultando a Gemini' }));
+            }
+          });
         },
       },
     ],

@@ -5,7 +5,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  ShoppingBag,
+  ShoppingCart,
   ShieldCheck,
   Search,
   ArrowRight,
@@ -21,6 +21,7 @@ import {
   ClientHealthGoals,
   ClientSession,
   ClientUser,
+  Gender,
   MedicalReportRecord,
   OrderReceipt,
   Product,
@@ -47,6 +48,7 @@ import { ClientAuthModal } from './components/ClientAuthModal';
 import { ClientBiometricsModal } from './components/ClientBiometricsModal';
 import { HealthAnalyticsSection } from './components/HealthAnalyticsSection';
 import { ChartMetricView } from './components/DynamicProgressChart';
+import { nutriApi } from './services/api';
 
 const STORAGE_KEYS = {
   PRODUCTS: 'nutrivital_products_v1',
@@ -432,14 +434,39 @@ export default function App() {
   const handleUpdateClientBiometrics = (
     clientId: string,
     biometrics: ClientBiometrics,
-    goals: ClientHealthGoals
+    goals: ClientHealthGoals,
+    updatedReports?: MedicalReportRecord[],
+    dateOfBirth?: string,
+    gender?: Gender
   ) => {
     setClients((prev) =>
       prev.map((c) =>
-        c.id === clientId ? { ...c, biometrics, goals } : c
+        c.id === clientId
+          ? {
+              ...c,
+              biometrics,
+              goals,
+              ...(updatedReports !== undefined ? { medicalReports: updatedReports } : {}),
+              ...(dateOfBirth !== undefined ? { dateOfBirth } : {}),
+              ...(gender !== undefined ? { gender } : {}),
+            }
+          : c
       )
     );
+    if (updatedReports !== undefined && currentClient?.id === clientId) {
+      setMedicalReports(updatedReports);
+    }
     setSimulatedCalories(biometrics.dailyCalories);
+    void nutriApi.syncBiometricsToDb(clientId, biometrics, dateOfBirth, gender);
+  };
+
+  const handleUpdateClientGoals = (clientId: string, goals: ClientHealthGoals) => {
+    setClients((prev) =>
+      prev.map((c) => (c.id === clientId ? { ...c, goals } : c))
+    );
+    if (adminSession) {
+      void nutriApi.syncAdminGoalsToDb(clientId, goals, adminSession.userId);
+    }
   };
 
   const handleLoginClient = (session: ClientSession) => {
@@ -454,6 +481,7 @@ export default function App() {
 
   const handleRegisterClient = (newClient: ClientUser) => {
     setClients((prev) => [newClient, ...prev]);
+    void nutriApi.registerClientToDb(newClient);
   };
 
   const handleLogoutClient = () => {
@@ -517,6 +545,7 @@ export default function App() {
           : c
       )
     );
+    void nutriApi.uploadReportToCloudDb(currentClient.id, newReport);
   };
 
   const handleDeleteMedicalReport = (reportId: string) => {
@@ -532,6 +561,7 @@ export default function App() {
           : c
       )
     );
+    void nutriApi.deleteReportFromCloudDb(reportId);
   };
 
   // Admin CRUD callbacks
@@ -687,7 +717,7 @@ export default function App() {
               aria-label={`Abrir carrito de compras con ${cartSummary.totalItems} artículos`}
               className="px-4 py-2 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded-xl transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 shadow-2xs"
             >
-              <ShoppingBag className="w-4 h-4 text-[#86EFAC]" />
+              <ShoppingCart className="w-4 h-4 text-[#86EFAC]" />
               <span>Carrito ({cartSummary.totalItems})</span>
             </button>
           </div>
@@ -769,6 +799,8 @@ export default function App() {
             products={products}
             salesHistory={salesHistory}
             recentOrders={recentOrders}
+            clients={clients}
+            onUpdateClientGoals={handleUpdateClientGoals}
             onAddProduct={handleAddProduct}
             onUpdateProduct={handleUpdateProduct}
             onDeleteProduct={handleDeleteProduct}
@@ -1095,7 +1127,19 @@ export default function App() {
             </span>{' '}
             · Plataforma de Nutrición Funcional & Bienestar Integral
           </div>
-          <div className="flex items-center gap-6">
+          <div className="flex flex-wrap items-center gap-6">
+            <a
+              href="https://wa.me/15550192834?text=Hola%20NutriVital,%20solicito%20asesor%C3%ADa%20nutricional"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#25D366]/10 text-[#128C7E] hover:bg-[#25D366] hover:text-white font-semibold transition-colors"
+              title="Contactar a un especialista NutriVital por WhatsApp"
+            >
+              <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12.031 2c-5.516 0-9.969 4.453-9.969 9.969 0 1.766.469 3.484 1.344 5l-1.406 5.156 5.281-1.375c1.469.797 3.109 1.219 4.75 1.219 5.516 0 9.969-4.453 9.969-9.969S17.547 2 12.031 2zm5.813 14.125c-.25.703-1.438 1.344-2 1.422-.516.078-1.188.141-3.344-.75-2.672-1.094-4.391-3.828-4.516-4-.125-.172-1.078-1.438-1.078-2.734s.672-1.938.922-2.203c.25-.266.547-.328.734-.328s.375.016.531.016c.172 0 .406-.063.641.484.25.578.844 2.063.922 2.219.078.156.125.344.016.563-.109.219-.156.344-.313.531-.156.188-.328.406-.469.547-.156.156-.328.328-.141.641.188.313.844 1.391 1.813 2.25 1.25 1.109 2.297 1.453 2.609 1.609.313.156.5.125.688-.094.188-.219.813-.953 1.031-1.281.219-.328.438-.281.734-.172.297.109 1.891.891 2.219 1.047.328.156.547.234.625.359.078.125.078.734-.172 1.438z" />
+              </svg>
+              <span>WhatsApp Asesoría</span>
+            </a>
             <a
               href="#catalogo"
               onClick={(e) => {
@@ -1196,6 +1240,7 @@ export default function App() {
 
       {/* FLOATING NUTRIBOT VIRTUAL ASSISTANT (Module E) */}
       <NutriBotWidget
+        currentClient={currentClient}
         onSelectCategory={(cat: ProductCategory) => {
           setActiveView('client');
           setSelectedCategory(cat);

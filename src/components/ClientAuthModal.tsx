@@ -12,6 +12,7 @@ import {
 import {
   ClientSession,
   ClientUser,
+  Gender,
 } from '../types/nutrivital';
 
 interface ClientAuthModalProps {
@@ -47,6 +48,8 @@ export const ClientAuthModal: React.FC<ClientAuthModalProps> = ({
   const [regName, setRegName] = useState<string>('');
   const [regEmail, setRegEmail] = useState<string>('');
   const [regPassword, setRegPassword] = useState<string>('');
+  const [regDob, setRegDob] = useState<string>('');
+  const [regGender, setRegGender] = useState<Gender>('Femenino');
   const [showRegPassword, setShowRegPassword] = useState<boolean>(false);
   const [regError, setRegError] = useState<string | null>(null);
 
@@ -131,6 +134,8 @@ export const ClientAuthModal: React.FC<ClientAuthModalProps> = ({
       password: regPassword.trim() || 'Cliente2026!',
       role: 'Cliente',
       createdAt: new Date().toISOString().split('T')[0],
+      dateOfBirth: regDob || undefined,
+      gender: regGender,
       biometrics: {
         systolicBP: 120,
         diastolicBP: 80,
@@ -138,6 +143,7 @@ export const ClientAuthModal: React.FC<ClientAuthModalProps> = ({
         bodyWeight: 70,
         bodyMass: 23.5,
         dailyCalories: 2100,
+        fattyLiverGrade: 0,
         lastUpdated: new Date().toISOString().replace('T', ' ').substring(0, 16),
       },
       goals: {
@@ -148,6 +154,7 @@ export const ClientAuthModal: React.FC<ClientAuthModalProps> = ({
         targetBodyMass: 22.5,
         targetCalories: 1950,
         timelineWeeks: 8,
+        setByAdminId: 'ADM-01',
       },
       activeSupplements: ['SUP-OMEGA3'],
     };
@@ -370,6 +377,30 @@ export const ClientAuthModal: React.FC<ClientAuthModalProps> = ({
                     placeholder="andres@ejemplo.com"
                     className="w-full pl-9 pr-3 py-2 text-xs rounded-xl border border-slate-200 focus:outline-none focus:border-emerald-600"
                   />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="block text-xs font-semibold text-slate-700">Fecha de Nacimiento</label>
+                  <input
+                    type="date"
+                    value={regDob}
+                    onChange={(e) => setRegDob(e.target.value)}
+                    className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 focus:outline-none focus:border-emerald-600 bg-white"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="block text-xs font-semibold text-slate-700">Género</label>
+                  <select
+                    value={regGender}
+                    onChange={(e) => setRegGender(e.target.value as Gender)}
+                    className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 focus:outline-none focus:border-emerald-600 bg-white"
+                  >
+                    <option value="Femenino">Femenino</option>
+                    <option value="Masculino">Masculino</option>
+                    <option value="Otro">Otro</option>
+                  </select>
                 </div>
               </div>
 

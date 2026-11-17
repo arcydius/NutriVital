@@ -143,6 +143,29 @@ export interface ChatMessage {
   recommendedCategory?: ProductCategory;
 }
 
+export type Gender = 'Masculino' | 'Femenino' | 'Otro';
+
+export type FattyLiverGrade = 0 | 1 | 2 | 3; // 0=No detectado/Normal, 1=Leve, 2=Moderado, 3=Severo
+
+export type MedicalRangeStatus = 'normal' | 'borderline' | 'critical';
+
+export interface MedicalRangeEvaluation {
+  status: MedicalRangeStatus;
+  label: string;
+  badgeClass: string;
+  textClass: string;
+  dotClass: string;
+}
+
+export type ChartMetricView =
+  | 'presion'
+  | 'pulsaciones'
+  | 'peso_masa'
+  | 'vitalidad'
+  | 'higado_graso';
+
+export type ChartMetricFocus = ChartMetricView;
+
 // ==========================================
 // INFORMES MÉDICOS & BIOMARCADORES DE LAB
 // ==========================================
@@ -158,6 +181,7 @@ export interface MedicalLabMarkers {
   creatinine?: number;       // Creatinina sérica (mg/dL, normal: 0.6-1.2)
   potassium?: number;        // Potasio sérico (mEq/L, normal: 3.5-5.1)
   ferritin?: number;         // Ferritina (ng/mL, normal: 30-300)
+  fattyLiverGrade?: FattyLiverGrade; // Grado de esteatosis hepática detectado
 }
 
 export interface MedicalReportRecord {
@@ -173,6 +197,7 @@ export interface MedicalReportRecord {
   detectedSystolicBP?: number;
   detectedDiastolicBP?: number;
   detectedHeartRate?: number;
+  filePath?: string;
 }
 
 // ==========================================
@@ -188,6 +213,7 @@ export interface ClientBiometrics {
   dailyCalories: number;
   height?: number;
   waistCircumference?: number;
+  fattyLiverGrade?: FattyLiverGrade; // 0=Normal, 1=Leve, 2=Moderado, 3=Severo
   lastUpdated: string;
 }
 
@@ -199,6 +225,8 @@ export interface ClientHealthGoals {
   targetBodyMass: number;
   targetCalories: number;
   timelineWeeks: number;
+  setByAdminId?: string; // Solo administradores pueden fijar metas
+  lastModifiedBy?: string;
 }
 
 export interface ClientUser {
@@ -208,6 +236,8 @@ export interface ClientUser {
   password?: string;
   role: 'Cliente';
   createdAt: string;
+  dateOfBirth?: string; // Formato YYYY-MM-DD
+  gender?: Gender;
   biometrics: ClientBiometrics;
   goals: ClientHealthGoals;
   activeSupplements: string[];
@@ -227,7 +257,9 @@ export type SupplementCategory =
   | 'Metabolismo'
   | 'Adaptógenos'
   | 'Vitalidad Celular'
-  | 'Micronutrientes';
+  | 'Micronutrientes'
+  | 'Estimulantes'
+  | 'Minerales';
 
 export interface SupplementItem {
   id: string;
@@ -256,11 +288,13 @@ export interface BiometricTrendPoint {
   bodyWeight: number;
   bodyMass: number;
   generalHealthScore: number;
+  fattyLiverScore?: number; // 0 a 100 o índice de riesgo hepático
   targetSystolic: number;
   targetDiastolic: number;
   targetHeartRate: number;
   targetWeight: number;
   targetBodyMass: number;
+  targetFattyLiverScore?: number;
 }
 
 export interface ProjectedImpactSummary {
@@ -274,11 +308,12 @@ export interface ProjectedImpactSummary {
   calorieDeltaVsMaintenance: number;
   bloodPressureCategory: 'Óptima' | 'Normal' | 'Elevada' | 'Hipertensión E1' | 'Hipertensión E2';
   trendDirection: 'improving' | 'stable' | 'deteriorating';
+  fattyLiverRisk?: 'Bajo / Normal' | 'Riesgo Moderado' | 'Esteatosis Activa';
 }
 
 export interface NutritionRecommendation {
   id: string;
-  category: 'presion' | 'pulsaciones' | 'calorias' | 'suplemento' | 'alerta' | 'positiva';
+  category: 'presion' | 'pulsaciones' | 'calorias' | 'suplemento' | 'alerta' | 'positiva' | 'higado';
   title: string;
   message: string;
   urgency: 'alta' | 'media' | 'preventiva' | 'positiva';
@@ -286,6 +321,6 @@ export interface NutritionRecommendation {
   relatedProductId?: string;
   relatedSupplementId?: string;
   suggestedCalorieDelta?: number;
-  chartMetricTrigger?: 'presion' | 'pulsaciones' | 'peso_masa' | 'vitalidad';
+  chartMetricTrigger?: ChartMetricView;
   metricEvidence?: string;
 }

@@ -16,15 +16,27 @@ import {
   ShieldAlert,
   FlaskConical,
   Loader2,
+  Download,
+  Lock,
 } from 'lucide-react';
 import {
   ClientBiometrics,
   ClientHealthGoals,
   ClientUser,
+  FattyLiverGrade,
+  Gender,
   MedicalReportRecord,
 } from '../types/nutrivital';
-import { getBloodPressureCategory } from '../utils/healthAnalytics';
+import {
+  calculateAge,
+  getBloodPressureCategory,
+  getMedicalMetricRange,
+} from '../utils/healthAnalytics';
 import { analyzeMedicalReportFile } from '../utils/medicalReportAnalyzer';
+import {
+  downloadMedicalReportPdf,
+  downloadMedicalReportTxt,
+} from '../utils/reportExporter';
 
 interface ClientBiometricsModalProps {
   isOpen: boolean;
@@ -35,7 +47,9 @@ interface ClientBiometricsModalProps {
     clientId: string,
     biometrics: ClientBiometrics,
     goals: ClientHealthGoals,
-    medicalReports?: MedicalReportRecord[]
+    medicalReports?: MedicalReportRecord[],
+    dateOfBirth?: string,
+    gender?: Gender
   ) => void;
   onSelectClient?: (client: ClientUser) => void;
 }
@@ -48,7 +62,11 @@ export const ClientBiometricsModal: React.FC<ClientBiometricsModalProps> = ({
   onUpdateBiometrics,
   onSelectClient,
 }) => {
-  // Biometrics Form State
+  // Profile Expansion State (DOB & Gender)
+  const [dateOfBirth, setDateOfBirth] = useState<string>(currentClient.dateOfBirth || '');
+  const [gender, setGender] = useState<Gender>(currentClient.gender || 'Femenino');
+
+  // Biometrics Form State (includes Fatty Liver)
   const [systolic, setSystolic] = useState<number>(currentClient.biometrics.systolicBP);
   const [diastolic, setDiastolic] = useState<number>(currentClient.biometrics.diastolicBP);
   const [heartRate, setHeartRate] = useState<number>(currentClient.biometrics.heartRate);
@@ -57,15 +75,16 @@ export const ClientBiometricsModal: React.FC<ClientBiometricsModalProps> = ({
   const [dailyCalories, setDailyCalories] = useState<number>(currentClient.biometrics.dailyCalories);
   const [height, setHeight] = useState<number>(currentClient.biometrics.height || 170);
   const [waist, setWaist] = useState<number>(currentClient.biometrics.waistCircumference || 80);
+  const [fattyLiverGrade, setFattyLiverGrade] = useState<FattyLiverGrade>(currentClient.biometrics.fattyLiverGrade ?? 0);
 
-  // Goals Form State
-  const [targetSystolic, setTargetSystolic] = useState<number>(currentClient.goals.targetSystolicBP);
-  const [targetDiastolic, setTargetDiastolic] = useState<number>(currentClient.goals.targetDiastolicBP);
-  const [targetHeartRate, setTargetHeartRate] = useState<number>(currentClient.goals.targetHeartRate);
-  const [targetWeight, setTargetWeight] = useState<number>(currentClient.goals.targetWeight);
-  const [targetBodyMass, setTargetBodyMass] = useState<number>(currentClient.goals.targetBodyMass);
-  const [targetCalories, setTargetCalories] = useState<number>(currentClient.goals.targetCalories);
-  const [timelineWeeks, setTimelineWeeks] = useState<number>(currentClient.goals.timelineWeeks || 8);
+  // Goals Form State (Read-only for clients: "El usuario no puede poner metas")
+  const targetSystolic = currentClient.goals.targetSystolicBP;
+  const targetDiastolic = currentClient.goals.targetDiastolicBP;
+  const targetHeartRate = currentClient.goals.targetHeartRate;
+  const targetWeight = currentClient.goals.targetWeight;
+  const targetBodyMass = currentClient.goals.targetBodyMass;
+  const targetCalories = currentClient.goals.targetCalories;
+  const timelineWeeks = currentClient.goals.timelineWeeks || 8;
 
   // Medical Reports State
   const [reports, setReports] = useState<MedicalReportRecord[]>(currentClient.medicalReports || []);
@@ -77,6 +96,8 @@ export const ClientBiometricsModal: React.FC<ClientBiometricsModalProps> = ({
 
   useEffect(() => {
     if (currentClient) {
+      setDateOfBirth(currentClient.dateOfBirth || '');
+      setGender(currentClient.gender || 'Femenino');
       setSystolic(currentClient.biometrics.systolicBP);
       setDiastolic(currentClient.biometrics.diastolicBP);
       setHeartRate(currentClient.biometrics.heartRate);
@@ -85,15 +106,7 @@ export const ClientBiometricsModal: React.FC<ClientBiometricsModalProps> = ({
       setDailyCalories(currentClient.biometrics.dailyCalories);
       setHeight(currentClient.biometrics.height || 170);
       setWaist(currentClient.biometrics.waistCircumference || 80);
-
-      setTargetSystolic(currentClient.goals.targetSystolicBP);
-      setTargetDiastolic(currentClient.goals.targetDiastolicBP);
-      setTargetHeartRate(currentClient.goals.targetHeartRate);
-      setTargetWeight(currentClient.goals.targetWeight);
-      setTargetBodyMass(currentClient.goals.targetBodyMass);
-      setTargetCalories(currentClient.goals.targetCalories);
-      setTimelineWeeks(currentClient.goals.timelineWeeks || 8);
-
+      setFattyLiverGrade(currentClient.biometrics.fattyLiverGrade ?? 0);
       setReports(currentClient.medicalReports || []);
       setReportError(null);
     }
@@ -115,7 +128,14 @@ export const ClientBiometricsModal: React.FC<ClientBiometricsModalProps> = ({
 
   if (!isOpen) return null;
 
-  const bpCategory = getBloodPressureCategory(systolic, diastolic);
+  const clientAge = calculateAge(dateOfBirth);
+  const bpCategory = getBloodPressureCategory(systolic, diastolic, clientAge);
+
+  const sysRange = getMedicalMetricRange('systolic', systolic, clientAge);
+  const diaRange = getMedicalMetricRange('diastolic', diastolic);
+  const hrRange = getMedicalMetricRange('heartRate', heartRate);
+  const bmiRange = getMedicalMetricRange('bmi', bodyMass);
+  const fattyRange = getMedicalMetricRange('fattyLiver', fattyLiverGrade);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -127,10 +147,13 @@ export const ClientBiometricsModal: React.FC<ClientBiometricsModalProps> = ({
       const analyzed = await analyzeMedicalReportFile(file);
       setReports((prev) => [analyzed, ...prev]);
 
-      // Si el informe detecta presión arterial o pulsaciones nuevas, actualizar campos
+      // Si el informe detecta presión arterial, pulsaciones o esteatosis nuevas, actualizar campos
       if (analyzed.detectedSystolicBP) setSystolic(analyzed.detectedSystolicBP);
       if (analyzed.detectedDiastolicBP) setDiastolic(analyzed.detectedDiastolicBP);
       if (analyzed.detectedHeartRate) setHeartRate(analyzed.detectedHeartRate);
+      if (analyzed.markers.fattyLiverGrade !== undefined) {
+        setFattyLiverGrade(analyzed.markers.fattyLiverGrade);
+      }
     } catch (err) {
       setReportError(err instanceof Error ? err.message : 'Error al procesar el informe médico.');
     } finally {
@@ -171,20 +194,18 @@ export const ClientBiometricsModal: React.FC<ClientBiometricsModalProps> = ({
       dailyCalories: Number(dailyCalories),
       height: Number(height),
       waistCircumference: Number(waist),
+      fattyLiverGrade: Number(fattyLiverGrade) as FattyLiverGrade,
       lastUpdated: new Date().toISOString().replace('T', ' ').substring(0, 16),
     };
 
-    const updatedGoals: ClientHealthGoals = {
-      targetSystolicBP: Number(targetSystolic),
-      targetDiastolicBP: Number(targetDiastolic),
-      targetHeartRate: Number(targetHeartRate),
-      targetWeight: Number(targetWeight),
-      targetBodyMass: Number(targetBodyMass),
-      targetCalories: Number(targetCalories),
-      timelineWeeks: Number(timelineWeeks),
-    };
-
-    onUpdateBiometrics(currentClient.id, updatedBiometrics, updatedGoals, reports);
+    onUpdateBiometrics(
+      currentClient.id,
+      updatedBiometrics,
+      currentClient.goals,
+      reports,
+      dateOfBirth,
+      gender
+    );
     setSaveSuccess(true);
     setTimeout(() => {
       setSaveSuccess(false);
@@ -214,7 +235,7 @@ export const ClientBiometricsModal: React.FC<ClientBiometricsModalProps> = ({
                 Perfil Clínico, Analíticas & Metas
               </h2>
               <p className="text-xs text-emerald-100">
-                Expediente de {currentClient.name}
+                Expediente de {currentClient.name} {clientAge !== undefined ? `· ${clientAge} años` : ''} ({gender})
               </p>
             </div>
           </div>
@@ -239,35 +260,45 @@ export const ClientBiometricsModal: React.FC<ClientBiometricsModalProps> = ({
                 <span>Cargar perfil clínico de prueba:</span>
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                {allClients.map((c) => (
-                  <button
-                    key={c.id}
-                    type="button"
-                    onClick={() => onSelectClient && onSelectClient(c)}
-                    className={`p-2.5 text-left rounded-xl border text-xs transition-all ${currentClient.id === c.id
-                        ? 'bg-emerald-50 border-emerald-500 text-emerald-950 font-semibold shadow-2xs'
-                        : 'bg-white border-slate-200 text-slate-700 hover:border-emerald-300'
-                      }`}
-                  >
-                    <div className="font-bold truncate">{c.name}</div>
-                    <div className="text-[11px] text-slate-500 font-mono">
-                      {c.biometrics.systolicBP}/{c.biometrics.diastolicBP} mmHg · {c.biometrics.heartRate} lpm
-                    </div>
-                    <div className="text-[10px] text-emerald-700">
-                      {c.biometrics.bodyWeight} kg · {(c.medicalReports?.length || 0)} informes
-                    </div>
-                  </button>
-                ))}
+                {allClients.map((c) => {
+                  const cAge = calculateAge(c.dateOfBirth);
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => onSelectClient && onSelectClient(c)}
+                      className={`p-2.5 text-left rounded-xl border text-xs transition-all ${currentClient.id === c.id
+                          ? 'bg-emerald-50 border-emerald-500 text-emerald-950 font-semibold shadow-2xs'
+                          : 'bg-white border-slate-200 text-slate-700 hover:border-emerald-300'
+                        }`}
+                    >
+                      <div className="font-bold truncate">{c.name}</div>
+                      <div className="text-[11px] text-slate-500 font-mono">
+                        {c.biometrics.systolicBP}/{c.biometrics.diastolicBP} mmHg · {c.biometrics.heartRate} lpm
+                      </div>
+                      <div className="text-[10px] text-emerald-700">
+                        {cAge !== undefined ? `${cAge} años` : 'Edad N/D'} · {c.biometrics.bodyWeight} kg · Hígado G{c.biometrics.fattyLiverGrade ?? 0}
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
-            {/* Diagnostic Header Badge */}
+            {/* Diagnostic Header Badge con Calibración por Edad */}
             <div className="flex flex-wrap items-center justify-between gap-3 p-4 rounded-2xl bg-emerald-50/70 border border-emerald-100">
               <div>
-                <span className="text-xs font-medium text-emerald-800">
-                  Diagnóstico de Presión Arterial:
-                </span>
-                <div className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-medium text-emerald-800">
+                    Diagnóstico de Presión Arterial:
+                  </span>
+                  {clientAge !== undefined && (
+                    <span className="text-[11px] font-semibold text-emerald-700 bg-white/80 px-2 py-0.5 rounded-md border border-emerald-200">
+                      Evaluado para {clientAge} años ({clientAge >= 65 ? 'Umbral adulto mayor ≥65a' : 'Umbral estándar <65a'})
+                    </span>
+                  )}
+                </div>
+                <div className="text-base font-bold text-slate-900 flex items-center gap-2 mt-1">
                   <span>
                     {systolic} / {diastolic} mmHg
                   </span>
@@ -291,18 +322,68 @@ export const ClientBiometricsModal: React.FC<ClientBiometricsModalProps> = ({
               </div>
             </div>
 
-            {/* 1. Datos Biométricos Iniciales */}
+            {/* 0. Datos de Identidad Fisiológica (Fecha de Nacimiento & Género) */}
+            <div className="p-4 rounded-2xl bg-white border border-slate-200 space-y-3">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                <User className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Datos Fisiológicos del Paciente</span>
+              </h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label htmlFor="user-dob" className="block text-xs font-semibold text-slate-700">
+                    Fecha de Nacimiento / Edad
+                  </label>
+                  <input
+                    id="user-dob"
+                    type="date"
+                    value={dateOfBirth}
+                    onChange={(e) => setDateOfBirth(e.target.value)}
+                    className="w-full px-3 py-1.5 text-sm font-mono rounded-lg border border-slate-200 focus:outline-none focus:border-emerald-600 bg-white"
+                  />
+                  <p className="text-[10px] text-slate-500">
+                    {clientAge !== undefined
+                      ? `Edad calculada: ${clientAge} años (calibra umbrales de presión arterial)`
+                      : 'Indica tu fecha de nacimiento para evaluar rangos de presión normal.'}
+                  </p>
+                </div>
+
+                <div className="space-y-1">
+                  <label htmlFor="user-gender" className="block text-xs font-semibold text-slate-700">
+                    Género / Sexo Biológico
+                  </label>
+                  <select
+                    id="user-gender"
+                    value={gender}
+                    onChange={(e) => setGender(e.target.value as Gender)}
+                    className="w-full px-3 py-1.5 text-sm rounded-lg border border-slate-200 focus:outline-none focus:border-emerald-600 bg-white"
+                  >
+                    <option value="Femenino">Femenino</option>
+                    <option value="Masculino">Masculino</option>
+                    <option value="Otro">Otro</option>
+                  </select>
+                  <p className="text-[10px] text-slate-500">Calibración metabólica y referencia antropométrica</p>
+                </div>
+              </div>
+            </div>
+
+            {/* 1. Datos Biométricos Iniciales con Marcadores de Color */}
             <div>
               <h3 className="text-sm font-bold text-slate-900 mb-3 flex items-center gap-2">
                 <Activity className="w-4 h-4 text-emerald-600" />
-                <span>1. Datos Biométricos Actuales</span>
+                <span>1. Datos Biométricos Actuales (Indicadores Clínicos por Color)</span>
               </h3>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {/* Presión Sistólica */}
                 <div className="p-3.5 rounded-xl border border-slate-200 bg-white space-y-1">
-                  <label htmlFor="bio-systolic" className="block text-xs font-semibold text-slate-700">
-                    Presión Sistólica (mmHg)
-                  </label>
+                  <div className="flex items-center justify-between gap-1">
+                    <label htmlFor="bio-systolic" className="block text-xs font-semibold text-slate-700">
+                      Sistólica (mmHg)
+                    </label>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-bold border ${sysRange.badgeClass}`}>
+                      {sysRange.label}
+                    </span>
+                  </div>
                   <input
                     id="bio-systolic"
                     type="number"
@@ -312,13 +393,19 @@ export const ClientBiometricsModal: React.FC<ClientBiometricsModalProps> = ({
                     onChange={(e) => setSystolic(Number(e.target.value))}
                     className="w-full px-3 py-1.5 text-sm font-mono font-bold rounded-lg border border-slate-200 focus:outline-none focus:border-emerald-600"
                   />
-                  <p className="text-[10px] text-slate-400">Rango normal: 110 - 120 mmHg</p>
+                  <p className="text-[10px] text-slate-400">Normal: &lt;{clientAge && clientAge >= 65 ? 130 : 120} mmHg</p>
                 </div>
 
+                {/* Presión Diastólica */}
                 <div className="p-3.5 rounded-xl border border-slate-200 bg-white space-y-1">
-                  <label htmlFor="bio-diastolic" className="block text-xs font-semibold text-slate-700">
-                    Presión Diastólica (mmHg)
-                  </label>
+                  <div className="flex items-center justify-between gap-1">
+                    <label htmlFor="bio-diastolic" className="block text-xs font-semibold text-slate-700">
+                      Diastólica (mmHg)
+                    </label>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-bold border ${diaRange.badgeClass}`}>
+                      {diaRange.label}
+                    </span>
+                  </div>
                   <input
                     id="bio-diastolic"
                     type="number"
@@ -331,11 +418,17 @@ export const ClientBiometricsModal: React.FC<ClientBiometricsModalProps> = ({
                   <p className="text-[10px] text-slate-400">Rango normal: 70 - 80 mmHg</p>
                 </div>
 
+                {/* Pulsaciones */}
                 <div className="p-3.5 rounded-xl border border-slate-200 bg-white space-y-1">
-                  <label htmlFor="bio-hr" className="block text-xs font-semibold text-slate-700 flex items-center gap-1">
-                    <Heart className="w-3.5 h-3.5 text-rose-500" />
-                    <span>Pulsaciones / Latidos (lpm)</span>
-                  </label>
+                  <div className="flex items-center justify-between gap-1">
+                    <label htmlFor="bio-hr" className="block text-xs font-semibold text-slate-700 flex items-center gap-1">
+                      <Heart className="w-3.5 h-3.5 text-rose-500" />
+                      <span>Pulsaciones (lpm)</span>
+                    </label>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-bold border ${hrRange.badgeClass}`}>
+                      {hrRange.label}
+                    </span>
+                  </div>
                   <input
                     id="bio-hr"
                     type="number"
@@ -345,9 +438,35 @@ export const ClientBiometricsModal: React.FC<ClientBiometricsModalProps> = ({
                     onChange={(e) => setHeartRate(Number(e.target.value))}
                     className="w-full px-3 py-1.5 text-sm font-mono font-bold rounded-lg border border-slate-200 focus:outline-none focus:border-emerald-600"
                   />
-                  <p className="text-[10px] text-slate-400">Reposo óptimo: 60 - 75 lpm</p>
+                  <p className="text-[10px] text-slate-400">Reposo óptimo: 60 - 80 lpm</p>
                 </div>
 
+                {/* Hígado Graso */}
+                <div className="p-3.5 rounded-xl border border-slate-200 bg-white space-y-1">
+                  <div className="flex items-center justify-between gap-1">
+                    <label htmlFor="bio-fatty" className="block text-xs font-semibold text-slate-700 flex items-center gap-1">
+                      <ShieldAlert className="w-3.5 h-3.5 text-amber-500" />
+                      <span>Hígado Graso</span>
+                    </label>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-bold border ${fattyRange.badgeClass}`}>
+                      {fattyRange.label}
+                    </span>
+                  </div>
+                  <select
+                    id="bio-fatty"
+                    value={fattyLiverGrade}
+                    onChange={(e) => setFattyLiverGrade(Number(e.target.value) as FattyLiverGrade)}
+                    className="w-full px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 focus:outline-none focus:border-emerald-600 bg-white"
+                  >
+                    <option value={0}>Grado 0 - Sano / Sin esteatosis</option>
+                    <option value={1}>Grado 1 - Esteatosis Leve</option>
+                    <option value={2}>Grado 2 - Esteatosis Moderada</option>
+                    <option value={3}>Grado 3 - Esteatosis Severa</option>
+                  </select>
+                  <p className="text-[10px] text-slate-400">Diagnóstico ecográfico o analítico</p>
+                </div>
+
+                {/* Peso Corporal */}
                 <div className="p-3.5 rounded-xl border border-slate-200 bg-white space-y-1">
                   <label htmlFor="bio-weight" className="block text-xs font-semibold text-slate-700 flex items-center gap-1">
                     <Scale className="w-3.5 h-3.5 text-emerald-600" />
@@ -366,6 +485,7 @@ export const ClientBiometricsModal: React.FC<ClientBiometricsModalProps> = ({
                   <p className="text-[10px] text-slate-400">Peso bruto registrado</p>
                 </div>
 
+                {/* Estatura */}
                 <div className="p-3.5 rounded-xl border border-slate-200 bg-white space-y-1">
                   <label htmlFor="bio-height" className="block text-xs font-semibold text-slate-700">
                     Altura / Estatura (cm)
@@ -382,6 +502,7 @@ export const ClientBiometricsModal: React.FC<ClientBiometricsModalProps> = ({
                   <p className="text-[10px] text-slate-400">Para cálculo exacto de IMC</p>
                 </div>
 
+                {/* Cintura */}
                 <div className="p-3.5 rounded-xl border border-slate-200 bg-white space-y-1">
                   <label htmlFor="bio-waist" className="block text-xs font-semibold text-slate-700">
                     Perímetro de Cintura (cm)
@@ -398,11 +519,17 @@ export const ClientBiometricsModal: React.FC<ClientBiometricsModalProps> = ({
                   <p className="text-[10px] text-slate-400">Indicador de grasa visceral</p>
                 </div>
 
+                {/* Masa Corporal / IMC */}
                 <div className="p-3.5 rounded-xl border border-slate-200 bg-white space-y-1">
-                  <label htmlFor="bio-mass" className="block text-xs font-semibold text-slate-700 flex items-center gap-1">
-                    <Zap className="w-3.5 h-3.5 text-amber-500" />
-                    <span>Masa Corporal (%)</span>
-                  </label>
+                  <div className="flex items-center justify-between gap-1">
+                    <label htmlFor="bio-mass" className="block text-xs font-semibold text-slate-700 flex items-center gap-1">
+                      <Zap className="w-3.5 h-3.5 text-amber-500" />
+                      <span>IMC / Masa (kg/m²)</span>
+                    </label>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-bold border ${bmiRange.badgeClass}`}>
+                      {bmiRange.label}
+                    </span>
+                  </div>
                   <input
                     id="bio-mass"
                     type="number"
@@ -413,9 +540,10 @@ export const ClientBiometricsModal: React.FC<ClientBiometricsModalProps> = ({
                     onChange={(e) => setBodyMass(Number(e.target.value))}
                     className="w-full px-3 py-1.5 text-sm font-mono font-bold rounded-lg border border-slate-200 focus:outline-none focus:border-emerald-600"
                   />
-                  <p className="text-[10px] text-slate-400">IMC o masa magra</p>
+                  <p className="text-[10px] text-slate-400">Normopeso: 18.5 - 24.9</p>
                 </div>
 
+                {/* Dieta Calórica */}
                 <div className="p-3.5 rounded-xl border border-slate-200 bg-white space-y-1">
                   <label htmlFor="bio-cal" className="block text-xs font-semibold text-slate-700 flex items-center gap-1">
                     <Flame className="w-3.5 h-3.5 text-orange-500" />
@@ -436,111 +564,112 @@ export const ClientBiometricsModal: React.FC<ClientBiometricsModalProps> = ({
               </div>
             </div>
 
-            {/* 2. Metas de Salud */}
+            {/* 2. Metas de Salud (Solo Lectura: El usuario no puede poner metas) */}
             <div>
-              <h3 className="text-sm font-bold text-slate-900 mb-3 flex items-center gap-2">
-                <Target className="w-4 h-4 text-emerald-600" />
-                <span>2. Metas de Salud & Objetivos</span>
-              </h3>
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                  <Target className="w-4 h-4 text-emerald-600" />
+                  <span>2. Metas de Salud & Objetivos Clínicos</span>
+                </h3>
+                <span className="inline-flex items-center gap-1 text-[10px] px-2.5 py-0.5 rounded-full font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                  <Lock className="w-3 h-3" />
+                  <span>Solo Administrador</span>
+                </span>
+              </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                <div className="p-3.5 rounded-xl border border-emerald-100 bg-emerald-50/30 space-y-1">
-                  <label htmlFor="goal-sys" className="block text-xs font-semibold text-emerald-900">
+              <div className="p-3.5 rounded-2xl bg-amber-50/80 border border-amber-200 text-xs text-amber-950 flex items-start gap-2.5 mb-3">
+                <Lock className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+                <div className="space-y-0.5">
+                  <p className="font-bold">Protocolo Clínico NutriVital (Modo Solo Lectura):</p>
+                  <p className="text-[11px] text-amber-800 leading-relaxed">
+                    El usuario no puede establecer ni modificar metas de salud personales. Tus objetivos terapéuticos han sido calibrados por el equipo nutricional y solo pueden ser actualizados desde el <strong>Portal Administrador</strong>.
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 opacity-80">
+                <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50 space-y-1">
+                  <label htmlFor="goal-sys" className="block text-xs font-semibold text-slate-600">
                     Meta Sistólica (mmHg)
                   </label>
                   <input
                     id="goal-sys"
                     type="number"
-                    min={90}
-                    max={180}
+                    disabled
                     value={targetSystolic}
-                    onChange={(e) => setTargetSystolic(Number(e.target.value))}
-                    className="w-full px-3 py-1.5 text-sm font-mono font-bold rounded-lg border border-emerald-200 focus:outline-none focus:border-emerald-600"
+                    className="w-full px-3 py-1.5 text-sm font-mono font-bold rounded-lg border border-slate-200 bg-slate-100 text-slate-500 cursor-not-allowed"
                   />
-                  <p className="text-[10px] text-emerald-700">Objetivo: &lt;120 mmHg</p>
+                  <p className="text-[10px] text-slate-500">Objetivo pautado por clínica</p>
                 </div>
 
-                <div className="p-3.5 rounded-xl border border-emerald-100 bg-emerald-50/30 space-y-1">
-                  <label htmlFor="goal-dia" className="block text-xs font-semibold text-emerald-900">
+                <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50 space-y-1">
+                  <label htmlFor="goal-dia" className="block text-xs font-semibold text-slate-600">
                     Meta Diastólica (mmHg)
                   </label>
                   <input
                     id="goal-dia"
                     type="number"
-                    min={50}
-                    max={110}
+                    disabled
                     value={targetDiastolic}
-                    onChange={(e) => setTargetDiastolic(Number(e.target.value))}
-                    className="w-full px-3 py-1.5 text-sm font-mono font-bold rounded-lg border border-emerald-200 focus:outline-none focus:border-emerald-600"
+                    className="w-full px-3 py-1.5 text-sm font-mono font-bold rounded-lg border border-slate-200 bg-slate-100 text-slate-500 cursor-not-allowed"
                   />
-                  <p className="text-[10px] text-emerald-700">Objetivo: &lt;80 mmHg</p>
+                  <p className="text-[10px] text-slate-500">Objetivo pautado por clínica</p>
                 </div>
 
-                <div className="p-3.5 rounded-xl border border-emerald-100 bg-emerald-50/30 space-y-1">
-                  <label htmlFor="goal-pulse" className="block text-xs font-semibold text-emerald-900">
+                <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50 space-y-1">
+                  <label htmlFor="goal-pulse" className="block text-xs font-semibold text-slate-600">
                     Meta Pulsaciones (lpm)
                   </label>
                   <input
                     id="goal-pulse"
                     type="number"
-                    min={50}
-                    max={120}
+                    disabled
                     value={targetHeartRate}
-                    onChange={(e) => setTargetHeartRate(Number(e.target.value))}
-                    className="w-full px-3 py-1.5 text-sm font-mono font-bold rounded-lg border border-emerald-200 focus:outline-none focus:border-emerald-600"
+                    className="w-full px-3 py-1.5 text-sm font-mono font-bold rounded-lg border border-slate-200 bg-slate-100 text-slate-500 cursor-not-allowed"
                   />
-                  <p className="text-[10px] text-emerald-700">Objetivo: 60 - 72 lpm</p>
+                  <p className="text-[10px] text-slate-500">Objetivo pautado por clínica</p>
                 </div>
 
-                <div className="p-3.5 rounded-xl border border-emerald-100 bg-emerald-50/30 space-y-1">
-                  <label htmlFor="goal-w" className="block text-xs font-semibold text-emerald-900">
+                <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50 space-y-1">
+                  <label htmlFor="goal-w" className="block text-xs font-semibold text-slate-600">
                     Meta de Peso (kg)
                   </label>
                   <input
                     id="goal-w"
                     type="number"
-                    step="0.5"
-                    min={40}
-                    max={200}
+                    disabled
                     value={targetWeight}
-                    onChange={(e) => setTargetWeight(Number(e.target.value))}
-                    className="w-full px-3 py-1.5 text-sm font-mono font-bold rounded-lg border border-emerald-200 focus:outline-none focus:border-emerald-600"
+                    className="w-full px-3 py-1.5 text-sm font-mono font-bold rounded-lg border border-slate-200 bg-slate-100 text-slate-500 cursor-not-allowed"
                   />
-                  <p className="text-[10px] text-emerald-700">Peso objetivo</p>
+                  <p className="text-[10px] text-slate-500">Peso objetivo pautado</p>
                 </div>
 
-                <div className="p-3.5 rounded-xl border border-emerald-100 bg-emerald-50/30 space-y-1">
-                  <label htmlFor="goal-m" className="block text-xs font-semibold text-emerald-900">
-                    Meta Masa Corporal (%)
+                <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50 space-y-1">
+                  <label htmlFor="goal-m" className="block text-xs font-semibold text-slate-600">
+                    Meta Masa Corporal (IMC)
                   </label>
                   <input
                     id="goal-m"
                     type="number"
-                    step="0.1"
-                    min={15}
-                    max={50}
+                    disabled
                     value={targetBodyMass}
-                    onChange={(e) => setTargetBodyMass(Number(e.target.value))}
-                    className="w-full px-3 py-1.5 text-sm font-mono font-bold rounded-lg border border-emerald-200 focus:outline-none focus:border-emerald-600"
+                    className="w-full px-3 py-1.5 text-sm font-mono font-bold rounded-lg border border-slate-200 bg-slate-100 text-slate-500 cursor-not-allowed"
                   />
-                  <p className="text-[10px] text-emerald-700">Composición meta</p>
+                  <p className="text-[10px] text-slate-500">Composición meta pautada</p>
                 </div>
 
-                <div className="p-3.5 rounded-xl border border-emerald-100 bg-emerald-50/30 space-y-1">
-                  <label htmlFor="goal-c" className="block text-xs font-semibold text-emerald-900">
+                <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50 space-y-1">
+                  <label htmlFor="goal-c" className="block text-xs font-semibold text-slate-600">
                     Meta Calórica (kcal/día)
                   </label>
                   <input
                     id="goal-c"
                     type="number"
-                    step="50"
-                    min={1200}
-                    max={4000}
+                    disabled
                     value={targetCalories}
-                    onChange={(e) => setTargetCalories(Number(e.target.value))}
-                    className="w-full px-3 py-1.5 text-sm font-mono font-bold rounded-lg border border-emerald-200 focus:outline-none focus:border-emerald-600"
+                    className="w-full px-3 py-1.5 text-sm font-mono font-bold rounded-lg border border-slate-200 bg-slate-100 text-slate-500 cursor-not-allowed"
                   />
-                  <p className="text-[10px] text-emerald-700">Balance calórico meta</p>
+                  <p className="text-[10px] text-slate-500">Balance calórico meta ({timelineWeeks} sem)</p>
                 </div>
               </div>
             </div>
@@ -646,14 +775,34 @@ export const ClientBiometricsModal: React.FC<ClientBiometricsModalProps> = ({
                           </div>
                         </div>
 
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveReport(rep.id)}
-                          title="Eliminar informe"
-                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => downloadMedicalReportTxt(rep, currentClient.name, dateOfBirth, gender)}
+                            title="Descargar informe como archivo de texto (.txt)"
+                            className="px-2 py-1 rounded-lg text-[10px] font-bold text-slate-600 bg-slate-50 border border-slate-200 hover:bg-emerald-50 hover:text-emerald-800 transition-colors flex items-center gap-1"
+                          >
+                            <FileText className="w-3 h-3 text-emerald-600" />
+                            <span>.TXT</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => downloadMedicalReportPdf(rep, currentClient.name, dateOfBirth, gender)}
+                            title="Descargar o imprimir informe clínico (.pdf)"
+                            className="px-2 py-1 rounded-lg text-[10px] font-bold text-slate-600 bg-slate-50 border border-slate-200 hover:bg-teal-50 hover:text-teal-800 transition-colors flex items-center gap-1"
+                          >
+                            <Download className="w-3 h-3 text-teal-600" />
+                            <span>.PDF</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveReport(rep.id)}
+                            title="Eliminar informe"
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
 
                       <p className="text-xs text-slate-700 leading-relaxed bg-slate-50 rounded-xl p-2.5 border border-slate-100">
@@ -661,33 +810,53 @@ export const ClientBiometricsModal: React.FC<ClientBiometricsModalProps> = ({
                         {rep.aiClinicalSummary}
                       </p>
 
-                      {/* Chips de Biomarcadores Detectados */}
+                      {/* Chips de Biomarcadores Detectados con Marcadores de Color */}
                       <div className="flex flex-wrap gap-1.5 text-[10px] font-mono">
-                        {rep.markers.triglycerides !== undefined && (
-                          <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-900 border border-amber-200">
-                            Triglicéridos: {rep.markers.triglycerides} mg/dL
-                          </span>
-                        )}
-                        {rep.markers.ldlCholesterol !== undefined && (
-                          <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-900 border border-amber-200">
-                            LDL: {rep.markers.ldlCholesterol} mg/dL
-                          </span>
-                        )}
-                        {rep.markers.fastingGlucose !== undefined && (
-                          <span className="px-2 py-0.5 rounded-md bg-sky-50 text-sky-900 border border-sky-200">
-                            Glucosa: {rep.markers.fastingGlucose} mg/dL
-                          </span>
-                        )}
-                        {rep.markers.vitaminD !== undefined && (
-                          <span className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-900 border border-emerald-200">
-                            Vitamina D: {rep.markers.vitaminD} ng/mL
-                          </span>
-                        )}
-                        {rep.markers.potassium !== undefined && (
-                          <span className="px-2 py-0.5 rounded-md bg-rose-50 text-rose-900 border border-rose-200">
-                            Potasio: {rep.markers.potassium} mEq/L
-                          </span>
-                        )}
+                        {rep.markers.triglycerides !== undefined && (() => {
+                          const r = getMedicalMetricRange('triglycerides', rep.markers.triglycerides);
+                          return (
+                            <span className={`px-2 py-0.5 rounded-md border flex items-center gap-1 ${r.badgeClass}`}>
+                              <span className={`w-1.5 h-1.5 rounded-full ${r.dotClass}`} />
+                              <span>Triglicéridos: {rep.markers.triglycerides} mg/dL</span>
+                            </span>
+                          );
+                        })()}
+                        {rep.markers.ldlCholesterol !== undefined && (() => {
+                          const r = getMedicalMetricRange('ldl', rep.markers.ldlCholesterol);
+                          return (
+                            <span className={`px-2 py-0.5 rounded-md border flex items-center gap-1 ${r.badgeClass}`}>
+                              <span className={`w-1.5 h-1.5 rounded-full ${r.dotClass}`} />
+                              <span>LDL: {rep.markers.ldlCholesterol} mg/dL</span>
+                            </span>
+                          );
+                        })()}
+                        {rep.markers.fastingGlucose !== undefined && (() => {
+                          const r = getMedicalMetricRange('glucose', rep.markers.fastingGlucose);
+                          return (
+                            <span className={`px-2 py-0.5 rounded-md border flex items-center gap-1 ${r.badgeClass}`}>
+                              <span className={`w-1.5 h-1.5 rounded-full ${r.dotClass}`} />
+                              <span>Glucosa: {rep.markers.fastingGlucose} mg/dL</span>
+                            </span>
+                          );
+                        })()}
+                        {rep.markers.vitaminD !== undefined && (() => {
+                          const r = getMedicalMetricRange('vitaminD', rep.markers.vitaminD);
+                          return (
+                            <span className={`px-2 py-0.5 rounded-md border flex items-center gap-1 ${r.badgeClass}`}>
+                              <span className={`w-1.5 h-1.5 rounded-full ${r.dotClass}`} />
+                              <span>Vitamina D: {rep.markers.vitaminD} ng/mL</span>
+                            </span>
+                          );
+                        })()}
+                        {rep.markers.potassium !== undefined && (() => {
+                          const r = getMedicalMetricRange('potassium', rep.markers.potassium);
+                          return (
+                            <span className={`px-2 py-0.5 rounded-md border flex items-center gap-1 ${r.badgeClass}`}>
+                              <span className={`w-1.5 h-1.5 rounded-full ${r.dotClass}`} />
+                              <span>Potasio: {rep.markers.potassium} mEq/L</span>
+                            </span>
+                          );
+                        })()}
                         {rep.markers.creatinine !== undefined && (
                           <span className="px-2 py-0.5 rounded-md bg-rose-50 text-rose-900 border border-rose-200">
                             Creatinina: {rep.markers.creatinine} mg/dL
@@ -704,11 +873,12 @@ export const ClientBiometricsModal: React.FC<ClientBiometricsModalProps> = ({
               </p>
             </div>
 
-            {/* Horizonte Temporal */}
-            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
+            {/* Horizonte Temporal (Bloqueado para cliente) */}
+            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 opacity-80">
               <div className="flex justify-between items-baseline mb-2">
-                <label htmlFor="timeline-weeks-edit" className="text-xs font-bold text-slate-800">
-                  Horizonte Temporal de Proyección de Metas:
+                <label htmlFor="timeline-weeks-edit" className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                  <Lock className="w-3.5 h-3.5 text-amber-600" />
+                  <span>Horizonte Temporal Asignado por Especialista:</span>
                 </label>
                 <span className="text-sm font-bold text-emerald-700 font-mono">
                   {timelineWeeks} semanas
@@ -717,17 +887,17 @@ export const ClientBiometricsModal: React.FC<ClientBiometricsModalProps> = ({
               <input
                 id="timeline-weeks-edit"
                 type="range"
+                disabled
                 min={4}
                 max={16}
                 step={2}
                 value={timelineWeeks}
-                onChange={(e) => setTimelineWeeks(Number(e.target.value))}
-                className="w-full h-2 bg-emerald-200 rounded-lg appearance-none cursor-pointer accent-emerald-600"
+                className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-not-allowed accent-slate-500"
               />
               <div className="flex justify-between text-[11px] text-slate-400 mt-1">
-                <span>4 sem (Corto)</span>
+                <span>4 sem</span>
                 <span>8 sem (Estándar clínico)</span>
-                <span>16 sem (Transformación)</span>
+                <span>16 sem</span>
               </div>
             </div>
 
