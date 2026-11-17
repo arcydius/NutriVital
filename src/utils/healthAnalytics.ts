@@ -305,9 +305,9 @@ export function generateNutritionalRecommendations(
   goals: ClientHealthGoals,
   selectedSupplements: SupplementItem[],
   simulatedCalories: number,
-  _allProducts: Product[],
-  trendPoints: BiometricTrendPoint[] = [],
-  selectedChartMetric: ChartMetricFocus = 'presion',
+  allProducts: Product[],
+  trendPoints?: BiometricTrendPoint[],
+  selectedChartMetric?: ChartMetricFocus,
   medicalReports: MedicalReportRecord[] = []
 ): NutritionRecommendation[] {
   const recs: NutritionRecommendation[] = [];
@@ -315,9 +315,27 @@ export function generateNutritionalRecommendations(
   const activeNames = selectedSupplements.map((s) => s.name.toLowerCase());
   const heightCm = biometrics.height || 170;
   const waistCm = biometrics.waistCircumference || 80;
+  const currentMetricFocus = selectedChartMetric || 'presion';
+
+  // Localizador dinámico de productos en el catálogo real
+  const findProduct = (preferredId: string, keyword: string): Product | undefined => {
+    return (
+      allProducts.find((p) => p.id === preferredId) ||
+      allProducts.find((p) => p.name.toLowerCase().includes(keyword.toLowerCase())) ||
+      allProducts.find((p) => p.category.toLowerCase().includes(keyword.toLowerCase()))
+    );
+  };
+
+  const omegaProd = findProduct('NV-104', 'omega');
+  const magnesiumProd = findProduct('NV-102', 'magnesio');
+  const proteinProd = findProduct('NV-101', 'proteína');
+  const ashwaProd = findProduct('NV-108', 'ashwagandha');
+  const potassiumProd = findProduct('NV-106', 'potasio');
+  const multivitProd =
+    findProduct('NV-103', 'multivitamínico') || findProduct('NV-107', 'antioxidante');
 
   const fallbackTrend =
-    trendPoints.length > 0
+    trendPoints && trendPoints.length > 0
       ? trendPoints
       : generateDynamicBiometricTrend(
         biometrics,
@@ -334,14 +352,23 @@ export function generateNutritionalRecommendations(
   // =========================================================================
   // 0. REGLAS DE LABORATORIO (INFORMES MÉDICOS ADJUNTOS AL PERFIL)
   // =========================================================================
-  const latestReport = medicalReports.length > 0 ? medicalReports[0] : null;
   const allContraindications = medicalReports.flatMap((r) => r.contraindications || []);
   const blockPotassium = allContraindications.some((c) =>
     c.toLowerCase().includes('potasio')
   );
 
-  if (latestReport) {
-    const m = latestReport.markers;
+  // Consolidar biomarcadores de todos los informes médicos (los más recientes tienen precedencia)
+  const consolidatedMarkers = medicalReports.reduceRight<Record<string, number | undefined>>(
+    (acc, rep) => ({ ...acc, ...rep.markers }),
+    {}
+  );
+
+  const latestReport = medicalReports.length > 0 ? medicalReports[0] : null;
+
+  if (medicalReports.length > 0 && latestReport) {
+    const m = consolidatedMarkers;
+    const reportRef = latestReport.fileName;
+    const reportDateRef = latestReport.reportDate;
 
     // Alerta de seguridad renal / potasio sérico elevado
     if (blockPotassium || (m.potassium && m.potassium > 5.0) || (m.creatinine && m.creatinine > 1.3)) {
@@ -349,13 +376,15 @@ export function generateNutritionalRecommendations(
         id: 'rec-lab-renal-guard',
         category: 'alerta',
         urgency: 'alta',
-        title: `Alerta Clínica de Laboratorio: Vigilancia Renal/Potasio (${latestReport.fileName})`,
+        title: `Alerta Clínica de Laboratorio: Vigilancia Renal/Potasio (${reportRef})`,
         message: `Tu informe médico registra ${m.potassium ? `potasio sérico en ${m.potassium} mEq/L` : ''
           }${m.potassium && m.creatinine ? ' y ' : ''}${m.creatinine ? `creatinina en ${m.creatinine} mg/dL` : ''
           }. Se desaconseja el uso de electrolitos con potasio añadido; prioriza hidratación controlada y Omega-3.`,
         suggestedAction: 'Evitar complejos de potasio y consultar ajuste con nefrólogo',
+        relatedProductId: magnesiumProd?.id || 'NV-102',
+        relatedSupplementId: 'SUP-MAGNESIO',
         chartMetricTrigger: 'presion',
-        metricEvidence: `Informe ${latestReport.reportDate} · Seguridad Clínica`,
+        metricEvidence: `Informe ${reportDateRef} · K+ ${m.potassium ?? '—'} mEq/L · Cr ${m.creatinine ?? '—'} mg/dL`,
       });
     }
 
@@ -366,14 +395,17 @@ export function generateNutritionalRecommendations(
       recs.push({
         id: 'rec-lab-lipids-omega3',
         category: 'suplemento',
-        urgency: (m.triglycerides && m.triglycerides >= 200) || (m.ldlCholesterol && m.ldlCholesterol >= 160) ? 'alta' : 'media',
+        urgency:
+          (m.triglycerides && m.triglycerides >= 200) || (m.ldlCholesterol && m.ldlCholesterol >= 160)
+            ? 'alta'
+            : 'media',
         title: `Modulación Lipídica según Analítica (${[trigText, ldlText].filter(Boolean).join(' · ')})`,
-        message: `Tu informe "${latestReport.fileName}" muestra perfil lipídico elevado. Los ácidos grasos Omega-3 EPA+DHA reducen la síntesis hepática de triglicéridos entre un 15% y 25% y protegen el endotelio vascular.`,
+        message: `Tu informe "${reportRef}" muestra perfil lipídico elevado. Los ácidos grasos Omega-3 EPA+DHA reducen la síntesis hepática de triglicéridos entre un 15% y 25% y protegen el endotelio vascular.`,
         suggestedAction: 'Simular Omega-3 Vegano EPA+DHA en tu gráfica cardiovascular',
-        relatedProductId: 'NV-104',
+        relatedProductId: omegaProd?.id || 'NV-104',
         relatedSupplementId: 'SUP-OMEGA3',
         chartMetricTrigger: 'presion',
-        metricEvidence: `Lab (${latestReport.reportDate}): ${[trigText, ldlText].filter(Boolean).join(' · ')}`,
+        metricEvidence: `Lab (${reportDateRef}): ${[trigText, ldlText].filter(Boolean).join(' · ')}`,
       });
     }
 
@@ -382,15 +414,18 @@ export function generateNutritionalRecommendations(
       recs.push({
         id: 'rec-lab-glucose-control',
         category: 'calorias',
-        urgency: (m.fastingGlucose && m.fastingGlucose >= 126) || (m.hba1c && m.hba1c >= 6.5) ? 'alta' : 'media',
+        urgency:
+          (m.fastingGlucose && m.fastingGlucose >= 126) || (m.hba1c && m.hba1c >= 6.5)
+            ? 'alta'
+            : 'media',
         title: `Control Glucémico Postprandial (Glucosa: ${m.fastingGlucose ?? '—'} mg/dL${m.hba1c ? ` · HbA1c: ${m.hba1c}%` : ''})`,
         message: `El laboratorio indica sensibilidad insulínica reducida. Reemplazar carbohidratos refinados por Proteína Bio-Activa con Matcha y aplicar -200 kcal/día estabiliza la curva glucémica y reduce la grasa visceral.`,
         suggestedAction: 'Aplicar ajuste de -200 kcal y añadir proteína de bajo índice glucémico',
         suggestedCalorieDelta: -200,
-        relatedProductId: 'NV-101',
+        relatedProductId: proteinProd?.id || 'NV-101',
         relatedSupplementId: 'SUP-PROTEINA_MATCHA',
         chartMetricTrigger: 'peso_masa',
-        metricEvidence: `Lab (${latestReport.reportDate}): Glucosa ${m.fastingGlucose ?? 'N/D'} mg/dL`,
+        metricEvidence: `Lab (${reportDateRef}): Glucosa ${m.fastingGlucose ?? 'N/D'} mg/dL`,
       });
     }
 
@@ -404,10 +439,25 @@ export function generateNutritionalRecommendations(
         message: `Tu informe detecta ${m.vitaminD && m.vitaminD < 30 ? `niveles subóptimos de Vitamina D (${m.vitaminD} ng/mL)` : 'marcadores inflamatorios elevados'
           }. El Magnesio Bisglicinato actúa como cofactor esencial para activar la Vitamina D y reducir la inflamación celular.`,
         suggestedAction: 'Activar Magnesio Bisglicinato Quelado en tu protocolo',
-        relatedProductId: 'NV-102',
+        relatedProductId: magnesiumProd?.id || 'NV-102',
         relatedSupplementId: 'SUP-MAGNESIO',
         chartMetricTrigger: 'vitalidad',
-        metricEvidence: `Lab (${latestReport.reportDate}): ${m.vitaminD ? `Vit D ${m.vitaminD} ng/mL` : `PCR ${m.hsCRP} mg/L`}`,
+        metricEvidence: `Lab (${reportDateRef}): ${m.vitaminD ? `Vit D ${m.vitaminD} ng/mL` : `PCR ${m.hsCRP} mg/L`}`,
+      });
+    }
+
+    // Ferritina sérica disminuida
+    if (m.ferritin !== undefined && m.ferritin < 30) {
+      recs.push({
+        id: 'rec-lab-ferritin-support',
+        category: 'suplemento',
+        urgency: m.ferritin < 15 ? 'alta' : 'media',
+        title: `Reserva Férrica & Oxigenación Mitocondrial (Ferritina: ${m.ferritin} ng/mL)`,
+        message: `Tu analítica indica ferritina sérica en ${m.ferritin} ng/mL (óptimo funcional: >40 ng/mL). Un aporte sinérgico de micronutrientes y vitamina C apoya el transporte mitocondrial de oxígeno.`,
+        suggestedAction: 'Añadir complejo de micronutrientes y optimizar ingesta',
+        relatedProductId: multivitProd?.id || 'NV-103',
+        chartMetricTrigger: 'vitalidad',
+        metricEvidence: `Lab (${reportDateRef}): Ferritina ${m.ferritin} ng/mL`,
       });
     }
   }
@@ -441,7 +491,7 @@ export function generateNutritionalRecommendations(
       title: `Brecha Arterial Detectada en Curva (${projectedBpCat})`,
       message: `La curva proyecta cerrar en ${Math.round(finalPt.systolicBP)}/${Math.round(finalPt.diastolicBP)} mmHg en ${finalWeekLabel}, quedando +${Math.max(0, sysGapToGoal).toFixed(1)} mmHg por encima de tu meta (${goals.targetSystolicBP}/${goals.targetDiastolicBP} mmHg). Integrar ${recommendedSuppLabel} acelerará la vasodilatación endotelial.`,
       suggestedAction: `Simular ${recommendedSuppLabel} para doblar la curva hacia tu meta`,
-      relatedProductId: 'NV-104',
+      relatedProductId: !hasOmega ? omegaProd?.id || 'NV-104' : magnesiumProd?.id || 'NV-102',
       relatedSupplementId: recommendedSuppId,
       chartMetricTrigger: 'presion',
       metricEvidence: `${Math.round(initialPt.systolicBP)}/${Math.round(initialPt.diastolicBP)} → ${Math.round(finalPt.systolicBP)}/${Math.round(finalPt.diastolicBP)} mmHg`,
@@ -454,7 +504,7 @@ export function generateNutritionalRecommendations(
       title: 'Curva de Presión Arterial Convergiendo a la Meta',
       message: `La trayectoria arterial desciende de ${Math.round(initialPt.systolicBP)}/${Math.round(initialPt.diastolicBP)} mmHg a ${Math.round(finalPt.systolicBP)}/${Math.round(finalPt.diastolicBP)} mmHg en ${finalWeekLabel}, alineándose con tu objetivo clínico (${goals.targetSystolicBP}/${goals.targetDiastolicBP} mmHg).`,
       suggestedAction: 'Mantener protocolo antioxidante y balance electrolítico actual',
-      relatedProductId: 'NV-102',
+      relatedProductId: magnesiumProd?.id || 'NV-102',
       relatedSupplementId: 'SUP-MAGNESIO',
       chartMetricTrigger: 'presion',
       metricEvidence: `Tendencia: ${(finalPt.systolicBP - initialPt.systolicBP).toFixed(1)} mmHg en ${finalWeekLabel}`,
@@ -476,7 +526,7 @@ export function generateNutritionalRecommendations(
       suggestedAction: hasAshwa
         ? 'Mantener Ashwagandha KSM-66 y reducir estimulantes vespertinos'
         : 'Activar Ashwagandha KSM-66 en la simulación para bajar lpm',
-      relatedProductId: 'NV-108',
+      relatedProductId: ashwaProd?.id || 'NV-108',
       relatedSupplementId: 'SUP-ASHWAGANDHA',
       chartMetricTrigger: 'pulsaciones',
       metricEvidence: `${Math.round(initialPt.heartRate)} lpm → ${Math.round(finalPt.heartRate)} lpm (Meta: ${goals.targetHeartRate} lpm)`,
@@ -502,7 +552,7 @@ export function generateNutritionalRecommendations(
       message: `Con ${simulatedCalories} kcal/día, tu peso proyectado en ${finalWeekLabel} es de ${finalPt.bodyWeight} kg (IMC ${finalPt.bodyMass}), manteniéndose a ${weightGapToGoal.toFixed(1)} kg de tu meta (${goals.targetWeight} kg). Aplicar un ajuste de -${suggestedCut} kcal/día inclinará la curva descendente.`,
       suggestedAction: `Aplicar ajuste de -${suggestedCut} kcal/día en el simulador`,
       suggestedCalorieDelta: -suggestedCut,
-      relatedProductId: 'NV-101',
+      relatedProductId: proteinProd?.id || 'NV-101',
       relatedSupplementId: 'SUP-PROTEINA_MATCHA',
       chartMetricTrigger: 'peso_masa',
       metricEvidence: `${initialPt.bodyWeight} kg → ${finalPt.bodyWeight} kg · IMC ${finalPt.bodyMass}`,
@@ -515,7 +565,7 @@ export function generateNutritionalRecommendations(
       title: `Reducción de Adiposidad Visceral (WHtR Proyectado: ${projectedWhtr})`,
       message: `Tu relación cintura/estatura proyectada de ${projectedWhtr} (${getWHtRStatus(projectedWhtr)}) sugiere potenciar la termogénesis lipídica. Combinar Proteína Bio-Activa con Matcha acelera la reducción abdominal sin perder tono muscular.`,
       suggestedAction: 'Simular complejo termogénico Matcha & Proteína Germinada',
-      relatedProductId: 'NV-101',
+      relatedProductId: proteinProd?.id || 'NV-101',
       relatedSupplementId: 'SUP-PROTEINA_MATCHA',
       chartMetricTrigger: 'peso_masa',
       metricEvidence: `Cintura proj.: ${projectedWaist.toFixed(1)} cm · IMC ${finalPt.bodyMass}`,
@@ -528,7 +578,7 @@ export function generateNutritionalRecommendations(
       title: 'Trayectoria de Peso e IMC en Zona Óptima',
       message: `Con ${simulatedCalories} kcal/día, tu curva evoluciona de ${initialPt.bodyWeight} kg a ${finalPt.bodyWeight} kg (IMC ${finalPt.bodyMass}) en ${finalWeekLabel}, acercándose de forma saludable a tu meta de ${goals.targetWeight} kg.`,
       suggestedAction: 'Conservar el balance calórico y proteico actual',
-      relatedProductId: 'NV-101',
+      relatedProductId: proteinProd?.id || 'NV-101',
       chartMetricTrigger: 'peso_masa',
       metricEvidence: `${initialPt.bodyWeight} kg → ${finalPt.bodyWeight} kg (Meta: ${goals.targetWeight} kg)`,
     });
@@ -556,7 +606,7 @@ export function generateNutritionalRecommendations(
       title: `Potenciación de Vitalidad Celular (${finalPt.generalHealthScore}/100 en ${finalWeekLabel})`,
       message: `Tu curva de vitalidad gana ${vitalityGain >= 0 ? `+${vitalityGain}` : vitalityGain} pts hasta alcanzar ${finalPt.generalHealthScore}/100. Activar cofactores antioxidantes maximiza la pendiente de recuperación celular.`,
       suggestedAction: 'Activar soporte mitocondrial en la simulación',
-      relatedProductId: needsThermogenic ? 'NV-101' : 'NV-102',
+      relatedProductId: needsThermogenic ? proteinProd?.id || 'NV-101' : magnesiumProd?.id || 'NV-102',
       relatedSupplementId: fallbackSupp,
       chartMetricTrigger: 'vitalidad',
       metricEvidence: `Score: ${initialPt.generalHealthScore}/100 → ${finalPt.generalHealthScore}/100`,
@@ -571,8 +621,8 @@ export function generateNutritionalRecommendations(
   };
 
   return recs.sort((a, b) => {
-    const aMatchesChart = a.chartMetricTrigger === selectedChartMetric ? 10 : 0;
-    const bMatchesChart = b.chartMetricTrigger === selectedChartMetric ? 10 : 0;
+    const aMatchesChart = a.chartMetricTrigger === currentMetricFocus ? 10 : 0;
+    const bMatchesChart = b.chartMetricTrigger === currentMetricFocus ? 10 : 0;
     return bMatchesChart + urgencyWeight[b.urgency] - (aMatchesChart + urgencyWeight[a.urgency]);
   });
 }

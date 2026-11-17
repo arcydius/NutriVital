@@ -16,6 +16,7 @@ import {
   getBloodPressureCategory,
 } from './healthAnalytics';
 import { AVAILABLE_SUPPLEMENTS, INITIAL_PRODUCTS } from '../data/seedData';
+import { analyzeMedicalReportFile, parseTextLabMarkers } from './medicalReportAnalyzer';
 
 const sampleProduct: Product = {
   id: 'NV-01',
@@ -251,4 +252,105 @@ test('generateNutritionalRecommendations flags elevated BP and caloric imbalance
   assert.ok(recs.some((r) => r.category === 'presion'), 'Should recommend BP protocol');
   assert.ok(recs.some((r) => r.category === 'pulsaciones'), 'Should recommend heart rate calming');
   assert.ok(recs.some((r) => r.category === 'calorias'), 'Should recommend caloric adjustment');
+});
+
+test('parseTextLabMarkers extracts multi-analyte lab values and flags clinical findings', () => {
+  const labText = `
+    INFORME DE LABORATORIO CLINICO
+    Fecha: 2026-11-15
+    Glucosa basal: 114 mg/dL (Ref: 70-99)
+    Hemoglobina Glicosilada (HbA1c): 6.0 %
+    Colesterol LDL: 148 mg/dL
+    Triglicéridos: 210 mg/dL
+    Potasio sérico: 5.3 mEq/L
+    Creatinina: 1.4 mg/dL
+    Vitamina D (25-OH): 22 ng/mL
+    Presión Arterial: 136/88 mmHg
+    Frecuencia Cardíaca: 78 lpm
+  `;
+
+  const record = parseTextLabMarkers(labText, 'analitica_completa.txt');
+  assert.ok(record !== null, 'Record should be parsed');
+  assert.equal(record.markers.fastingGlucose, 114);
+  assert.equal(record.markers.hba1c, 6.0);
+  assert.equal(record.markers.ldlCholesterol, 148);
+  assert.equal(record.markers.triglycerides, 210);
+  assert.equal(record.markers.potassium, 5.3);
+  assert.equal(record.markers.creatinine, 1.4);
+  assert.equal(record.markers.vitaminD, 22);
+  assert.equal(record.detectedSystolicBP, 136);
+  assert.equal(record.detectedDiastolicBP, 88);
+  assert.equal(record.detectedHeartRate, 78);
+  assert.ok(record.contraindications.some((c) => c.includes('potasio')));
+  assert.ok(record.flaggedFindings.some((f) => f.includes('Triglicéridos')));
+});
+
+test('generateNutritionalRecommendations integrates lab reports with renal and lipid alerts', () => {
+  const bio = {
+    systolicBP: 125,
+    diastolicBP: 80,
+    heartRate: 70,
+    bodyWeight: 75,
+    bodyMass: 24.5,
+    dailyCalories: 2200,
+    lastUpdated: '2026-11-01',
+  };
+  const goals = {
+    targetSystolicBP: 118,
+    targetDiastolicBP: 78,
+    targetHeartRate: 68,
+    targetWeight: 72,
+    targetBodyMass: 23.5,
+    targetCalories: 2000,
+    timelineWeeks: 8,
+  };
+
+  const sampleReport = {
+    id: 'REP-TEST-1',
+    fileName: 'chequeo_renal_lipidos.pdf',
+    reportType: 'Chequeo Cardiometabólico' as const,
+    reportDate: '2026-11-15',
+    uploadedAt: '10:30',
+    aiClinicalSummary: 'Potasio elevado y triglicéridos altos.',
+    markers: {
+      potassium: 5.4,
+      creatinine: 1.38,
+      triglycerides: 220,
+      ldlCholesterol: 145,
+    },
+    flaggedFindings: ['Potasio sérico elevado', 'Triglicéridos elevados'],
+    contraindications: ['Evitar suplementos concentrados de potasio'],
+  };
+
+  const recs = generateNutritionalRecommendations(
+    bio,
+    goals,
+    [],
+    2200,
+    INITIAL_PRODUCTS,
+    undefined,
+    'presion',
+    [sampleReport]
+  );
+
+  const renalAlert = recs.find((r) => r.id === 'rec-lab-renal-guard');
+  assert.ok(renalAlert, 'Should trigger renal guard alert');
+  assert.equal(renalAlert.urgency, 'alta');
+
+  const lipidRec = recs.find((r) => r.id === 'rec-lab-lipids-omega3');
+  assert.ok(lipidRec, 'Should trigger lipid modulation recommendation');
+  assert.ok(lipidRec.message.includes('Omega-3'));
+});
+
+test('analyzeMedicalReportFile correctly analyzes text files asynchronously', async () => {
+  const sampleContent = 'Glucosa: 108 mg/dL\nTrigliceridos: 195 mg/dL\nVitamina D: 25 ng/mL\nPresion Arterial: 130/84 mmHg';
+  const file = new File([sampleContent], 'laboratorio_paciente.txt', { type: 'text/plain' });
+
+  const analyzed = await analyzeMedicalReportFile(file);
+  assert.equal(analyzed.fileName, 'laboratorio_paciente.txt');
+  assert.equal(analyzed.markers.fastingGlucose, 108);
+  assert.equal(analyzed.markers.triglycerides, 195);
+  assert.equal(analyzed.markers.vitaminD, 25);
+  assert.equal(analyzed.detectedSystolicBP, 130);
+  assert.equal(analyzed.detectedDiastolicBP, 84);
 });
