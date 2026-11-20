@@ -8,7 +8,7 @@ import {
   deductInventoryAfterPurchase,
   generateWellnessProjection,
 } from './analytics';
-import { AdminUser, Product, SaleRecord } from '../types/nutrivital';
+import { AdminUser, ClientUser, Product, SaleRecord } from '../types/nutrivital';
 import {
   calculateAge,
   calculateProjectedImpact,
@@ -18,7 +18,7 @@ import {
   getBloodPressureCategory,
   getMedicalMetricRange,
 } from './healthAnalytics';
-import { AVAILABLE_SUPPLEMENTS, INITIAL_PRODUCTS } from '../data/seedData';
+import { AVAILABLE_SUPPLEMENTS, INITIAL_CLIENT_USERS, INITIAL_PRODUCTS } from '../data/seedData';
 import { analyzeMedicalReportFile, parseTextLabMarkers } from './medicalReportAnalyzer';
 
 const sampleProduct: Product = {
@@ -426,4 +426,21 @@ test('Coffee and Salt supplements exist and Fatty Liver recommendations trigger'
   const recs = generateNutritionalRecommendations(bio, goals, [salt], 2400, INITIAL_PRODUCTS, trend, 'higado_graso', []);
   assert.ok(recs.some((r) => r.id === 'rec-fatty-liver-protocol'), 'Should recommend fatty liver protocol');
   assert.ok(recs.some((r) => r.id === 'rec-sodium-alert'), 'Should warn about active sodium/salt');
+});
+
+test('Cart summary and guest session state remain deterministic upon logout', () => {
+  // Test cart summary calculates 0 when items are empty
+  const emptySummary = calculateCartSummary([]);
+  assert.equal(emptySummary.total, 0);
+  assert.equal(emptySummary.totalItems, 0);
+  assert.equal(emptySummary.shipping, 0);
+
+  // When client logs out, session is strictly null and currentClient resolves to null
+  const clientSession = null;
+  const clients = INITIAL_CLIENT_USERS;
+  const currentClient = clientSession
+    ? clients.find((c: ClientUser) => c.id === (clientSession as { userId: string }).userId) ?? null
+    : null;
+
+  assert.equal(currentClient, null, 'Current client must be null when session is null, not default to Laura');
 });

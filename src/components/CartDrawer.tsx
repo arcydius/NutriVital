@@ -8,8 +8,9 @@ import {
   CheckCircle2,
   ArrowRight,
   Truck,
+  Sparkles,
 } from 'lucide-react';
-import { CartItem, OrderReceipt } from '../types/nutrivital';
+import { CartItem, ClientUser, OrderReceipt } from '../types/nutrivital';
 import {
   calculateCartSummary,
   FREE_SHIPPING_THRESHOLD,
@@ -19,6 +20,7 @@ interface CartDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   items: CartItem[];
+  currentClient?: ClientUser | null;
   onUpdateQuantity: (productId: string, delta: number) => void;
   onRemoveItem: (productId: string) => void;
   onCompletePurchase: (customerName: string, customerEmail: string) => OrderReceipt | null;
@@ -28,14 +30,44 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   isOpen,
   onClose,
   items,
+  currentClient,
   onUpdateQuantity,
   onRemoveItem,
   onCompletePurchase,
 }) => {
-  const [customerName, setCustomerName] = useState('Valeria Mendoza');
-  const [customerEmail, setCustomerEmail] = useState('valeria.mendoza@ejemplo.com');
+  const [customerName, setCustomerName] = useState(() => currentClient?.name || 'Cliente NutriVital');
+  const [customerEmail, setCustomerEmail] = useState(() => currentClient?.email || 'cliente@nutrivital.salud');
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [completedReceipt, setCompletedReceipt] = useState<OrderReceipt | null>(null);
+
+  // Synchronize customer details with active client session or defaults
+  useEffect(() => {
+    if (currentClient) {
+      setCustomerName(currentClient.name);
+      setCustomerEmail(currentClient.email);
+    } else {
+      setCustomerName('Cliente NutriVital');
+      setCustomerEmail('cliente@nutrivital.salud');
+    }
+  }, [currentClient, isOpen]);
+
+  const handleCloseAll = () => {
+    setCompletedReceipt(null);
+    setCheckoutError(null);
+    onClose();
+  };
+
+  // Close drawer with Escape key - MUST BE DECLARED UNCONDITIONALLY (Rule of Hooks)
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        handleCloseAll();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -65,34 +97,16 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
     }
   };
 
-  // Close drawer with Escape key
-  useEffect(() => {
-    if (!isOpen) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        handleCloseAll();
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen]);
-
-  const handleCloseAll = () => {
-    setCompletedReceipt(null);
-    setCheckoutError(null);
-    onClose();
-  };
-
   return (
     <div
-      className="fixed inset-0 z-50 flex justify-end bg-slate-900/40 backdrop-blur-xs"
+      className="fixed inset-0 z-50 flex justify-end bg-slate-900/40 backdrop-blur-xs transition-opacity duration-200"
       role="dialog"
       aria-modal="true"
       aria-labelledby="cart-drawer-title"
       onClick={handleCloseAll}
     >
       <div
-        className="bg-white w-full max-w-md h-full shadow-2xl border-l border-slate-200 flex flex-col justify-between overflow-hidden"
+        className="bg-white w-full max-w-md h-full shadow-2xl border-l border-slate-200 flex flex-col justify-between overflow-hidden animate-in slide-in-from-right duration-300"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Drawer Header */}
@@ -217,16 +231,31 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
             {/* Cart Items List */}
             <div className="flex-1 overflow-y-auto p-6 space-y-4">
               {items.length === 0 ? (
-                <div className="text-center py-14 space-y-3">
-                  <div className="w-12 h-12 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mx-auto">
-                    <ShoppingBag className="w-6 h-6" />
+                <div className="text-center py-12 px-4 space-y-4">
+                  <div className="w-14 h-14 rounded-2xl bg-emerald-50 border border-emerald-100 text-emerald-600 flex items-center justify-center mx-auto shadow-2xs">
+                    <ShoppingBag className="w-7 h-7" />
                   </div>
-                  <p className="text-sm font-semibold text-slate-800">
-                    Tu carrito está vacío
-                  </p>
-                  <p className="text-xs text-slate-500 max-w-xs mx-auto">
-                    Explora nuestro catálogo de superalimentos orgánicos, proteínas limpias y suplementos biodisponibles.
-                  </p>
+                  <div className="space-y-1">
+                    <p className="text-base font-bold text-slate-800">
+                      Tu carrito está vacío
+                    </p>
+                    <p className="text-xs text-slate-500 max-w-xs mx-auto">
+                      Explora nuestro catálogo de superalimentos orgánicos, proteínas limpias y suplementos biodisponibles.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleCloseAll();
+                      setTimeout(() => {
+                        document.getElementById('catalogo')?.scrollIntoView({ behavior: 'smooth' });
+                      }, 50);
+                    }}
+                    className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold shadow-sm transition-colors cursor-pointer"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-emerald-200" />
+                    <span>Explorar Catálogo Saludable</span>
+                  </button>
                 </div>
               ) : (
                 items.map(({ product, quantity }) => (

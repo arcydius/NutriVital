@@ -133,30 +133,15 @@ export default function App() {
       if (saved) {
         return JSON.parse(saved);
       }
-      return {
-        userId: INITIAL_CLIENT_USERS[0].id,
-        name: INITIAL_CLIENT_USERS[0].name,
-        email: INITIAL_CLIENT_USERS[0].email,
-        role: 'Cliente',
-        loggedInAt: new Date().toISOString(),
-      };
+      return null;
     } catch {
-      return {
-        userId: INITIAL_CLIENT_USERS[0].id,
-        name: INITIAL_CLIENT_USERS[0].name,
-        email: INITIAL_CLIENT_USERS[0].email,
-        role: 'Cliente',
-        loggedInAt: new Date().toISOString(),
-      };
+      return null;
     }
   });
 
   const currentClient = useMemo(() => {
-    return (
-      clients.find((c) => c.id === clientSession?.userId) ??
-      clients[0] ??
-      INITIAL_CLIENT_USERS[0]
-    );
+    if (!clientSession) return null;
+    return clients.find((c) => c.id === clientSession.userId) ?? null;
   }, [clients, clientSession]);
 
   const [isClientAuthModalOpen, setIsClientAuthModalOpen] = useState<boolean>(false);
@@ -178,8 +163,12 @@ export default function App() {
       setActiveSupplementIds(currentClient.activeSupplements || ['SUP-OMEGA3', 'SUP-MAGNESIO']);
       setSimulatedCalories(currentClient.biometrics.dailyCalories || 2200);
       setMedicalReports(currentClient.medicalReports || []);
+    } else {
+      setActiveSupplementIds(['SUP-OMEGA3', 'SUP-MAGNESIO']);
+      setSimulatedCalories(2200);
+      setMedicalReports([]);
     }
-  }, [currentClient.id]);
+  }, [currentClient?.id]);
 
   useEffect(() => {
     try {
@@ -485,16 +474,11 @@ export default function App() {
   };
 
   const handleLogoutClient = () => {
-    if (clients.length > 0) {
-      setClientSession({
-        userId: clients[0].id,
-        name: clients[0].name,
-        email: clients[0].email,
-        role: 'Cliente',
-        loggedInAt: new Date().toISOString(),
-      });
-    } else {
-      setClientSession(null);
+    setClientSession(null);
+    try {
+      localStorage.removeItem(STORAGE_KEYS.CLIENT_SESSION);
+    } catch {
+      // Ignore storage errors
     }
   };
 
@@ -504,11 +488,13 @@ export default function App() {
         ? prev.filter((id) => id !== suppId)
         : [...prev, suppId];
 
-      setClients((all) =>
-        all.map((c) =>
-          c.id === currentClient.id ? { ...c, activeSupplements: next } : c
-        )
-      );
+      if (currentClient) {
+        setClients((all) =>
+          all.map((c) =>
+            c.id === currentClient.id ? { ...c, activeSupplements: next } : c
+          )
+        );
+      }
       return next;
     });
   };
@@ -1098,7 +1084,13 @@ export default function App() {
             {/* HEALTH ANALYTICS, BIOMETRICS, LAB REPORTS & DYNAMIC GOALS CHART */}
             <HealthAnalyticsSection
               currentClient={currentClient}
-              onOpenProfileModal={() => setIsClientBiometricsModalOpen(true)}
+              onOpenProfileModal={() => {
+                if (currentClient) {
+                  setIsClientBiometricsModalOpen(true);
+                } else {
+                  setIsClientAuthModalOpen(true);
+                }
+              }}
               products={products}
               onAddToCart={handleAddToCart}
               activeSupplementIds={activeSupplementIds}
@@ -1193,6 +1185,7 @@ export default function App() {
         isOpen={isCartOpen}
         onClose={() => setIsCartOpen(false)}
         items={cart}
+        currentClient={currentClient}
         onUpdateQuantity={handleUpdateCartQuantity}
         onRemoveItem={handleRemoveFromCart}
         onCompletePurchase={handleCompletePurchase}
@@ -1224,7 +1217,7 @@ export default function App() {
       <ClientBiometricsModal
         isOpen={isClientBiometricsModalOpen}
         onClose={() => setIsClientBiometricsModalOpen(false)}
-        currentClient={currentClient}
+        currentClient={currentClient ?? clients[0] ?? INITIAL_CLIENT_USERS[0]}
         allClients={clients}
         onUpdateBiometrics={handleUpdateClientBiometrics}
         onSelectClient={(c) => {

@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { Edit3, FileText } from 'lucide-react';
+import { Edit3, FileText, LogIn, User } from 'lucide-react';
 import {
   ClientUser,
   MedicalReportRecord,
@@ -15,8 +15,38 @@ import {
 import { DynamicProgressChart, ChartMetricView } from './DynamicProgressChart';
 import { SupplementAnalysisEngine } from './SupplementAnalysisEngine';
 
+const GUEST_CLIENT: ClientUser = {
+  id: 'CLI-GUEST',
+  name: 'Modo Invitado',
+  email: 'invitado@nutrivital.salud',
+  role: 'Cliente',
+  createdAt: '2026-01-01',
+  gender: 'Femenino',
+  biometrics: {
+    systolicBP: 124,
+    diastolicBP: 82,
+    heartRate: 74,
+    bodyWeight: 67,
+    bodyMass: 23.1,
+    dailyCalories: 2150,
+    fattyLiverGrade: 0,
+    lastUpdated: '2026-11-19 12:00',
+  },
+  goals: {
+    targetSystolicBP: 118,
+    targetDiastolicBP: 78,
+    targetHeartRate: 68,
+    targetWeight: 63,
+    targetBodyMass: 22.0,
+    targetCalories: 1950,
+    timelineWeeks: 12,
+    setByAdminId: 'ADM-01',
+  },
+  activeSupplements: ['SUP-OMEGA3', 'SUP-MAGNESIO'],
+};
+
 interface HealthAnalyticsSectionProps {
-  currentClient: ClientUser;
+  currentClient: ClientUser | null;
   onOpenProfileModal: () => void;
   products: Product[];
   onAddToCart: (product: Product) => void;
@@ -46,24 +76,27 @@ export const HealthAnalyticsSection: React.FC<HealthAnalyticsSectionProps> = ({
   onUploadMedicalReport,
   onDeleteMedicalReport,
 }) => {
+  const client = currentClient ?? GUEST_CLIENT;
+  const isGuest = !currentClient;
+
   const selectedSupplements = useMemo(() => {
     const idSet = new Set(activeSupplementIds);
     return AVAILABLE_SUPPLEMENTS.filter((s) => idSet.has(s.id));
   }, [activeSupplementIds]);
 
-  const timelineWeeks = currentClient.goals.timelineWeeks || 8;
+  const timelineWeeks = client.goals.timelineWeeks || 8;
 
   const impactSummary = useMemo(() => {
     return calculateProjectedImpact(
-      currentClient.biometrics,
-      currentClient.goals,
+      client.biometrics,
+      client.goals,
       selectedSupplements,
       simulatedCalories,
       timelineWeeks
     );
   }, [
-    currentClient.biometrics,
-    currentClient.goals,
+    client.biometrics,
+    client.goals,
     selectedSupplements,
     simulatedCalories,
     timelineWeeks,
@@ -71,15 +104,15 @@ export const HealthAnalyticsSection: React.FC<HealthAnalyticsSectionProps> = ({
 
   const trendPoints = useMemo(() => {
     return generateDynamicBiometricTrend(
-      currentClient.biometrics,
-      currentClient.goals,
+      client.biometrics,
+      client.goals,
       selectedSupplements,
       simulatedCalories,
       timelineWeeks
     );
   }, [
-    currentClient.biometrics,
-    currentClient.goals,
+    client.biometrics,
+    client.goals,
     selectedSupplements,
     simulatedCalories,
     timelineWeeks,
@@ -87,8 +120,8 @@ export const HealthAnalyticsSection: React.FC<HealthAnalyticsSectionProps> = ({
 
   const recommendations = useMemo(() => {
     return generateNutritionalRecommendations(
-      currentClient.biometrics,
-      currentClient.goals,
+      client.biometrics,
+      client.goals,
       selectedSupplements,
       simulatedCalories,
       products,
@@ -97,8 +130,8 @@ export const HealthAnalyticsSection: React.FC<HealthAnalyticsSectionProps> = ({
       medicalReports
     );
   }, [
-    currentClient.biometrics,
-    currentClient.goals,
+    client.biometrics,
+    client.goals,
     selectedSupplements,
     simulatedCalories,
     products,
@@ -137,18 +170,26 @@ export const HealthAnalyticsSection: React.FC<HealthAnalyticsSectionProps> = ({
 
           <div className="bg-white rounded-3xl p-4 sm:p-5 border border-emerald-100 shadow-sm flex flex-wrap items-center justify-between gap-4 shrink-0">
             <div className="flex items-center gap-3">
-              <div className="w-11 h-11 rounded-2xl bg-emerald-100/80 flex items-center justify-center text-emerald-800 font-bold text-sm">
-                {currentClient.name
-                  .split(' ')
-                  .map((n) => n[0])
-                  .slice(0, 2)
-                  .join('')}
+              <div className={`w-11 h-11 rounded-2xl flex items-center justify-center font-bold text-sm ${
+                isGuest ? 'bg-slate-100 text-slate-600' : 'bg-emerald-100/80 text-emerald-800'
+              }`}>
+                {isGuest ? (
+                  <User className="w-5 h-5 text-slate-500" />
+                ) : (
+                  client.name
+                    .split(' ')
+                    .map((n) => n[0])
+                    .slice(0, 2)
+                    .join('')
+                )}
               </div>
               <div>
                 <div className="flex items-center gap-2">
-                  <span className="text-sm font-bold text-slate-900">{currentClient.name}</span>
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-semibold">
-                    {currentClient.role}
+                  <span className="text-sm font-bold text-slate-900">{client.name}</span>
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${
+                    isGuest ? 'bg-slate-100 text-slate-700' : 'bg-emerald-100 text-emerald-800'
+                  }`}>
+                    {client.role}
                   </span>
                   {medicalReports.length > 0 && (
                     <span className="text-[10px] px-2 py-0.5 rounded-full bg-teal-100 text-teal-800 font-semibold flex items-center gap-1">
@@ -161,13 +202,14 @@ export const HealthAnalyticsSection: React.FC<HealthAnalyticsSectionProps> = ({
                   )}
                 </div>
                 <div className="text-xs text-slate-500 font-mono mt-0.5">
-                  {calculateAge(currentClient.dateOfBirth) !== undefined
-                    ? `${calculateAge(currentClient.dateOfBirth)} años · `
+                  {calculateAge(client.dateOfBirth) !== undefined
+                    ? `${calculateAge(client.dateOfBirth)} años · `
                     : ''}
-                  {currentClient.gender ? `${currentClient.gender} · ` : ''}
-                  {currentClient.biometrics.systolicBP}/{currentClient.biometrics.diastolicBP} mmHg ·{' '}
-                  {currentClient.biometrics.heartRate} lpm · {currentClient.biometrics.bodyWeight} kg ·{' '}
-                  Hígado G{currentClient.biometrics.fattyLiverGrade ?? 0}
+                  {client.gender ? `${client.gender} · ` : ''}
+                  {client.biometrics.systolicBP}/{client.biometrics.diastolicBP} mmHg ·{' '}
+                  {client.biometrics.heartRate} lpm · {client.biometrics.bodyWeight} kg ·{' '}
+                  Hígado G{client.biometrics.fattyLiverGrade ?? 0}
+                  {isGuest && <span className="text-emerald-700 font-sans ml-1">(Datos de demostración)</span>}
                 </div>
               </div>
             </div>
@@ -175,10 +217,23 @@ export const HealthAnalyticsSection: React.FC<HealthAnalyticsSectionProps> = ({
             <button
               type="button"
               onClick={onOpenProfileModal}
-              className="px-3.5 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-bold transition-colors flex items-center gap-1.5"
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5 ${
+                isGuest
+                  ? 'bg-emerald-700 hover:bg-emerald-800 text-white shadow-2xs'
+                  : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800'
+              }`}
             >
-              <Edit3 className="w-3.5 h-3.5" />
-              <span>Editar Mi Biometría</span>
+              {isGuest ? (
+                <>
+                  <LogIn className="w-3.5 h-3.5 text-emerald-200" />
+                  <span>Iniciar Sesión / Calibrar</span>
+                </>
+              ) : (
+                <>
+                  <Edit3 className="w-3.5 h-3.5" />
+                  <span>Editar Mi Biometría</span>
+                </>
+              )}
             </button>
           </div>
         </div>
@@ -195,8 +250,8 @@ export const HealthAnalyticsSection: React.FC<HealthAnalyticsSectionProps> = ({
               timelineWeeks={timelineWeeks}
               simulatedCalories={simulatedCalories}
               onChangeSimulatedCalories={onChangeSimulatedCalories}
-              targetCalories={currentClient.goals.targetCalories}
-              baselineCalories={currentClient.biometrics.dailyCalories}
+              targetCalories={client.goals.targetCalories}
+              baselineCalories={client.biometrics.dailyCalories}
               recommendations={recommendations}
               activeSupplementIds={activeSupplementIds}
               onToggleSupplement={onToggleSupplement}
@@ -208,8 +263,8 @@ export const HealthAnalyticsSection: React.FC<HealthAnalyticsSectionProps> = ({
           {/* Columna Derecha: Gestor de Informes Médicos + KPIs Proyectados + Sugerencias IA */}
           <div className="lg:col-span-5">
             <SupplementAnalysisEngine
-              biometrics={currentClient.biometrics}
-              goals={currentClient.goals}
+              biometrics={client.biometrics}
+              goals={client.goals}
               activeSupplementIds={activeSupplementIds}
               onToggleSupplement={onToggleSupplement}
               simulatedCalories={simulatedCalories}
