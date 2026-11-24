@@ -22,6 +22,7 @@ import {
   ArrowUpDown,
   Award,
   BarChart3,
+  Calendar,
 } from 'lucide-react';
 import {
   AdminSession,
@@ -38,6 +39,10 @@ import {
   calculateOrdinaryLinearRegression,
   calculateTopSellingProducts,
   computeProductStatus,
+  filterOrdersByDateAndQuery,
+  getIsoWeekKey,
+  getLocalDateKey,
+  OrderDateFilterMode,
 } from '../utils/analytics';
 import { ProductIllustration } from './ProductIllustration';
 
@@ -128,9 +133,51 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [formDescription, setFormDescription] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
 
-  // Safe Confirmation Modal & Expanded Orders
+  // Safe Confirmation Modal & Orders History Filters
   const [productPendingDelete, setProductPendingDelete] = useState<Product | null>(null);
   const [expandedOrderIds, setExpandedOrderIds] = useState<Set<string>>(new Set());
+  const todayLocalDate = useMemo(() => getLocalDateKey(new Date()), []);
+  const currentIsoWeek = useMemo(() => getIsoWeekKey(new Date()), []);
+  const currentMonthKey = todayLocalDate.slice(0, 7);
+
+  const [orderSearchQuery, setOrderSearchQuery] = useState<string>('');
+  const [orderFilterMode, setOrderFilterMode] = useState<OrderDateFilterMode>('all');
+  const [orderFilterDay, setOrderFilterDay] = useState<string>(todayLocalDate);
+  const [orderFilterWeek, setOrderFilterWeek] = useState<string>(currentIsoWeek);
+  const [orderFilterMonth, setOrderFilterMonth] = useState<string>(currentMonthKey);
+  const [orderFilterFrom, setOrderFilterFrom] = useState<string>('');
+  const [orderFilterTo, setOrderFilterTo] = useState<string>(todayLocalDate);
+
+  const filteredOrders = useMemo(
+    () =>
+      filterOrdersByDateAndQuery(recentOrders, {
+        mode: orderFilterMode,
+        day: orderFilterDay,
+        week: orderFilterWeek,
+        month: orderFilterMonth,
+        dateFrom: orderFilterFrom,
+        dateTo: orderFilterTo,
+        query: orderSearchQuery,
+      }),
+    [
+      recentOrders,
+      orderFilterMode,
+      orderFilterDay,
+      orderFilterWeek,
+      orderFilterMonth,
+      orderFilterFrom,
+      orderFilterTo,
+      orderSearchQuery,
+    ]
+  );
+
+  const filteredOrdersTotal = useMemo(
+    () => filteredOrders.reduce((acc, o) => acc + o.total, 0),
+    [filteredOrders]
+  );
+
+  const hasActiveOrderFilters =
+    orderFilterMode !== 'all' || orderSearchQuery.trim().length > 0;
 
   // 100% Real Sales Series derived exclusively from Supabase orders + order_items
   const salesSeries = useMemo(
@@ -1653,26 +1700,193 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           </div>
         </section>
 
-        {/* SECTION 3: EXPANDABLE ORDERS HISTORY (Synced with Supabase) */}
-        <section className="bg-white rounded-2xl border border-slate-200/90 shadow-xs p-6 space-y-4">
-          <div className="flex items-center justify-between gap-2">
+        {/* SECTION 3: EXPANDABLE ORDERS HISTORY WITH DATE / DAY / WEEK / MONTH FILTERS */}
+        <section className="bg-white rounded-2xl border border-slate-200/90 shadow-xs p-6 space-y-5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
             <div>
               <p className="text-xs font-medium text-emerald-700">
                 Registro de E-Commerce · Sincronizado con Supabase
               </p>
               <h3 className="text-lg font-bold text-slate-900">
-                Historial de Pedidos ({recentOrders.length})
+                Historial de Pedidos ({filteredOrders.length}
+                {filteredOrders.length !== recentOrders.length
+                  ? ` de ${recentOrders.length}`
+                  : ''}
+                )
               </h3>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="px-3 py-1.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 font-mono font-bold tabular-nums">
+                Total mostrado: ${filteredOrdersTotal.toFixed(2)} USD
+              </span>
+              {hasActiveOrderFilters && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOrderFilterMode('all');
+                    setOrderSearchQuery('');
+                    setOrderFilterFrom('');
+                    setOrderFilterTo(todayLocalDate);
+                  }}
+                  className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold transition-colors"
+                >
+                  Limpiar filtros
+                </button>
+              )}
             </div>
           </div>
 
-          {recentOrders.length === 0 ? (
-            <p className="text-xs text-slate-500 py-4 text-center bg-slate-50 rounded-xl border border-dashed border-slate-200">
-              Aún no se han registrado pedidos en la tienda.
+          {/* Orders Search & Date/Day/Week/Month Filter Toolbar */}
+          <div className="space-y-3 bg-slate-50/80 border border-slate-200/80 rounded-2xl p-4">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+              {/* Filter Mode Tabs */}
+              <div className="flex flex-wrap items-center gap-1 bg-white p-1 rounded-xl border border-slate-200/80">
+                {(
+                  [
+                    { id: 'all', label: 'Todos' },
+                    { id: 'day', label: 'Por Día' },
+                    { id: 'week', label: 'Por Semana' },
+                    { id: 'month', label: 'Por Mes' },
+                    { id: 'range', label: 'Rango de Fechas' },
+                  ] as { id: OrderDateFilterMode; label: string }[]
+                ).map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setOrderFilterMode(tab.id)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap ${
+                      orderFilterMode === tab.id
+                        ? 'bg-emerald-700 text-white shadow-2xs'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Search by Order ID / Client / Product */}
+              <div className="relative w-full lg:w-72">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                <input
+                  type="search"
+                  aria-label="Buscar pedido por ID, cliente o producto"
+                  value={orderSearchQuery}
+                  onChange={(e) => setOrderSearchQuery(e.target.value)}
+                  placeholder="Buscar #pedido, cliente o producto..."
+                  className="w-full pl-9 pr-3 py-2 text-xs rounded-xl border border-slate-200 bg-white focus:outline-none focus:border-emerald-600"
+                />
+              </div>
+            </div>
+
+            {/* Dynamic Date Picker Input according to selected Mode */}
+            {orderFilterMode !== 'all' && (
+              <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-slate-200/70 text-xs">
+                <span className="inline-flex items-center gap-1.5 font-semibold text-slate-700">
+                  <Calendar className="w-4 h-4 text-emerald-700" />
+                  <span>
+                    {orderFilterMode === 'day' && 'Selecciona el día:'}
+                    {orderFilterMode === 'week' && 'Selecciona la semana:'}
+                    {orderFilterMode === 'month' && 'Selecciona el mes:'}
+                    {orderFilterMode === 'range' && 'Rango de fechas:'}
+                  </span>
+                </span>
+
+                {orderFilterMode === 'day' && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      type="date"
+                      aria-label="Filtrar pedidos por día exacto"
+                      value={orderFilterDay}
+                      onChange={(e) => setOrderFilterDay(e.target.value)}
+                      className="px-3 py-1.5 rounded-xl border border-slate-200 bg-white font-mono text-xs"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setOrderFilterDay(todayLocalDate)}
+                      className="px-2.5 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-semibold border border-emerald-200"
+                    >
+                      Hoy
+                    </button>
+                  </div>
+                )}
+
+                {orderFilterMode === 'week' && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      type="week"
+                      aria-label="Filtrar pedidos por semana"
+                      value={orderFilterWeek}
+                      onChange={(e) => setOrderFilterWeek(e.target.value)}
+                      className="px-3 py-1.5 rounded-xl border border-slate-200 bg-white font-mono text-xs"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setOrderFilterWeek(currentIsoWeek)}
+                      className="px-2.5 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-semibold border border-emerald-200"
+                    >
+                      Esta semana
+                    </button>
+                  </div>
+                )}
+
+                {orderFilterMode === 'month' && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      type="month"
+                      aria-label="Filtrar pedidos por mes"
+                      value={orderFilterMonth}
+                      onChange={(e) => setOrderFilterMonth(e.target.value)}
+                      className="px-3 py-1.5 rounded-xl border border-slate-200 bg-white font-mono text-xs"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setOrderFilterMonth(currentMonthKey)}
+                      className="px-2.5 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-semibold border border-emerald-200"
+                    >
+                      Mes actual
+                    </button>
+                  </div>
+                )}
+
+                {orderFilterMode === 'range' && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <label className="flex items-center gap-1.5 text-slate-600">
+                      <span>Desde:</span>
+                      <input
+                        type="date"
+                        aria-label="Fecha inicial del rango de pedidos"
+                        value={orderFilterFrom}
+                        onChange={(e) => setOrderFilterFrom(e.target.value)}
+                        className="px-3 py-1.5 rounded-xl border border-slate-200 bg-white font-mono text-xs"
+                      />
+                    </label>
+                    <label className="flex items-center gap-1.5 text-slate-600">
+                      <span>Hasta:</span>
+                      <input
+                        type="date"
+                        aria-label="Fecha final del rango de pedidos"
+                        value={orderFilterTo}
+                        onChange={(e) => setOrderFilterTo(e.target.value)}
+                        className="px-3 py-1.5 rounded-xl border border-slate-200 bg-white font-mono text-xs"
+                      />
+                    </label>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {filteredOrders.length === 0 ? (
+            <p className="text-xs text-slate-500 py-6 text-center bg-slate-50 rounded-xl border border-dashed border-slate-200">
+              {recentOrders.length === 0
+                ? 'Aún no se han registrado pedidos en la tienda.'
+                : 'No se encontraron pedidos para el filtro de fecha o búsqueda seleccionado.'}
             </p>
           ) : (
             <div className="space-y-2.5">
-              {recentOrders.map((ord) => {
+              {filteredOrders.map((ord) => {
                 const isExpanded = expandedOrderIds.has(ord.id);
                 return (
                   <div

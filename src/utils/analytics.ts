@@ -447,3 +447,83 @@ export function calculateTopSellingProducts(
     (a, b) => b.revenue - a.revenue || b.unitsSold - a.unitsSold
   );
 }
+
+export type OrderDateFilterMode = 'all' | 'day' | 'week' | 'month' | 'range';
+
+export interface OrderFilterOptions {
+  mode: OrderDateFilterMode;
+  day?: string;      // YYYY-MM-DD
+  week?: string;     // YYYY-Www (ISO-8601 week, ej. 2026-W48)
+  month?: string;    // YYYY-MM
+  dateFrom?: string; // YYYY-MM-DD
+  dateTo?: string;   // YYYY-MM-DD
+  query?: string;
+}
+
+export function getIsoWeekKey(date: Date): string {
+  const temp = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const dayNum = temp.getUTCDay() || 7; // 1=Mon..7=Sun
+  temp.setUTCDate(temp.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(temp.getUTCFullYear(), 0, 1));
+  const weekNo = Math.ceil((((temp.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+  return `${temp.getUTCFullYear()}-W${String(weekNo).padStart(2, '0')}`;
+}
+
+export function getLocalDateKey(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+/**
+ * Filtra el historial de pedidos por texto (ID, cliente, correo o producto)
+ * y por fecha exacta (día), semana ISO, mes o rango desde/hasta.
+ */
+export function filterOrdersByDateAndQuery(
+  orders: OrderReceipt[],
+  options: OrderFilterOptions
+): OrderReceipt[] {
+  const q = (options.query || '').trim().toLowerCase();
+
+  return orders.filter((ord, idx) => {
+    if (q) {
+      const matchesText =
+        ord.id.toLowerCase().includes(q) ||
+        ord.customerName.toLowerCase().includes(q) ||
+        ord.customerEmail.toLowerCase().includes(q) ||
+        ord.items.some(
+          (item) =>
+            item.name.toLowerCase().includes(q) ||
+            item.productId.toLowerCase().includes(q)
+        );
+      if (!matchesText) return false;
+    }
+
+    if (options.mode === 'all') return true;
+
+    const ts = getOrderTimestampMs(ord, idx);
+    const d = new Date(ts);
+    if (Number.isNaN(d.getTime())) return false;
+
+    const dateKey = getLocalDateKey(d);
+    const monthKey = dateKey.slice(0, 7);
+    const weekKey = getIsoWeekKey(d);
+
+    if (options.mode === 'day') {
+      return !options.day || dateKey === options.day;
+    }
+    if (options.mode === 'week') {
+      return !options.week || weekKey === options.week;
+    }
+    if (options.mode === 'month') {
+      return !options.month || monthKey === options.month;
+    }
+    if (options.mode === 'range') {
+      if (options.dateFrom && dateKey < options.dateFrom) return false;
+      if (options.dateTo && dateKey > options.dateTo) return false;
+      return true;
+    }
+    return true;
+  });
+}

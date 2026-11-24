@@ -8,7 +8,9 @@ import {
   calculateTopSellingProducts,
   computeProductStatus,
   deductInventoryAfterPurchase,
+  filterOrdersByDateAndQuery,
   generateWellnessProjection,
+  getIsoWeekKey,
 } from './analytics';
 import { AdminUser, ClientUser, Product, SaleRecord } from '../types/nutrivital';
 import {
@@ -705,4 +707,33 @@ test('Real sales aggregation and top-selling products derive accurately from ord
   assert.equal(top[0].revenue, 144);
   assert.equal(top[1].productId, 'NV-101');
   assert.equal(top[1].unitsSold, 2);
+
+  // Orders filtering by day, week, month, range, and search query
+  assert.equal(
+    filterOrdersByDateAndQuery(realOrders, { mode: 'day', day: '2026-11-24' }).length,
+    2
+  );
+  assert.equal(
+    filterOrdersByDateAndQuery(realOrders, { mode: 'month', month: '2026-11' }).length,
+    3
+  );
+  assert.equal(
+    filterOrdersByDateAndQuery(realOrders, {
+      mode: 'week',
+      week: getIsoWeekKey(new Date('2026-11-24T17:18:00.000Z')),
+    }).length,
+    2
+  );
+  assert.equal(
+    filterOrdersByDateAndQuery(realOrders, {
+      mode: 'range',
+      dateFrom: '2026-11-22',
+      dateTo: '2026-11-23',
+    }).length,
+    1
+  );
+  assert.equal(
+    filterOrdersByDateAndQuery(realOrders, { mode: 'all', query: 'arelenys' }).length,
+    1
+  );
 });
