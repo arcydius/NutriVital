@@ -211,7 +211,16 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [cart, setCart] = useState<CartItem[]>([]);
   const [isCartOpen, setIsCartOpen] = useState<boolean>(false);
+  const [reopenCartAfterLogin, setReopenCartAfterLogin] = useState<boolean>(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
+
+  // Automatically reopen cart after login when checkout triggered authentication
+  useEffect(() => {
+    if (currentClient && reopenCartAfterLogin) {
+      setReopenCartAfterLogin(false);
+      setIsCartOpen(true);
+    }
+  }, [currentClient, reopenCartAfterLogin]);
   const [authModalMode, setAuthModalMode] = useState<'login' | 'register'>('login');
   const [recentlyAddedId, setRecentlyAddedId] = useState<string | null>(null);
   const [recentOrders, setRecentOrders] = useState<OrderReceipt[]>(() => {
@@ -345,9 +354,10 @@ export default function App() {
 
   const handleCompletePurchase = (
     customerName: string,
-    customerEmail: string
+    customerEmail: string,
+    paymentMethod = 'PayPal Sandbox'
   ): OrderReceipt | null => {
-    if (cart.length === 0) return null;
+    if (!currentClient || cart.length === 0) return null;
 
     const summary = calculateCartSummary(cart);
     const updatedProducts = deductInventoryAfterPurchase(products, cart);
@@ -364,9 +374,9 @@ export default function App() {
         minute: '2-digit',
       }),
       createdAtIso: now.toISOString(),
-      customerName,
-      customerEmail,
-      paymentMethod: 'Pago Verificado NutriVital Pay',
+      customerName: currentClient.name || customerName,
+      customerEmail: currentClient.email || customerEmail,
+      paymentMethod,
       items: cart.map((c) => ({
         productId: c.product.id,
         name: c.product.name,
@@ -382,7 +392,7 @@ export default function App() {
 
     setRecentOrders((prev) => [receipt, ...prev]);
     setCart([]);
-    void nutriApi.recordOrderToDb(receipt, updatedProducts, currentClient?.id);
+    void nutriApi.recordOrderToDb(receipt, updatedProducts, currentClient.id);
     return receipt;
   };
 
@@ -1342,6 +1352,11 @@ export default function App() {
         onUpdateQuantity={handleUpdateCartQuantity}
         onRemoveItem={handleRemoveFromCart}
         onCompletePurchase={handleCompletePurchase}
+        onRequireLogin={() => {
+          setReopenCartAfterLogin(true);
+          setIsCartOpen(false);
+          handleOpenClientAuth();
+        }}
       />
 
       {/* ADMIN AUTHENTICATION MODAL */}
@@ -1358,7 +1373,10 @@ export default function App() {
       {/* CLIENT AUTHENTICATION MODAL (ONLY WHEN NOT LOGGED IN) */}
       <ClientAuthModal
         isOpen={isClientAuthModalOpen && !currentClient}
-        onClose={() => setIsClientAuthModalOpen(false)}
+        onClose={() => {
+          setIsClientAuthModalOpen(false);
+          setReopenCartAfterLogin(false);
+        }}
         currentClient={clientSession ? currentClient : null}
         allClients={clients}
         onLoginClient={handleLoginClient}

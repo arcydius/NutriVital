@@ -29,6 +29,15 @@ import {
 import { AVAILABLE_SUPPLEMENTS, INITIAL_CLIENT_USERS, INITIAL_PRODUCTS } from '../data/seedData';
 import { analyzeMedicalReportFile, parseTextLabMarkers } from './medicalReportAnalyzer';
 import { parseNonNegativeMetric } from '../components/AdminDashboard';
+import {
+  buildSandboxBuyerAccounts,
+  canProceedToPayPalCheckout,
+  formatPayPalSandboxPaymentMethod,
+  generatePayPalSandboxCheckoutToken,
+  generatePayPalSandboxTransactionId,
+  SANDBOX_DEFAULT_BUYERS,
+  SANDBOX_TEST_CARDS,
+} from './paypalSandbox';
 
 const sampleProduct: Product = {
   id: 'NV-01',
@@ -736,4 +745,50 @@ test('Real sales aggregation and top-selling products derive accurately from ord
     filterOrdersByDateAndQuery(realOrders, { mode: 'all', query: 'arelenys' }).length,
     1
   );
+});
+
+test('PayPal Sandbox helpers build buyer accounts, generate IDs, and format payment methods', () => {
+  // Guest receives default sandbox accounts
+  const guestAccounts = buildSandboxBuyerAccounts(null);
+  assert.equal(guestAccounts.length, SANDBOX_DEFAULT_BUYERS.length);
+  assert.equal(guestAccounts[0].email, 'sb-comprador@personal.example.com');
+
+  // Logged-in client gets prioritized sandbox-linked account without duplicates
+  const clientAccounts = buildSandboxBuyerAccounts({
+    id: 'CLI-01',
+    name: 'Laura Morales',
+    email: 'laura@nutrivital.com',
+  });
+  assert.equal(clientAccounts[0].isRegisteredClient, true);
+  assert.equal(clientAccounts[0].name, 'Laura Morales');
+  assert.equal(clientAccounts[0].email, 'laura@nutrivital.com');
+  assert.equal(clientAccounts.length, SANDBOX_DEFAULT_BUYERS.length + 1);
+
+  // Transaction ID & checkout token match expected Sandbox format
+  const txId = generatePayPalSandboxTransactionId(() => 0);
+  assert.match(txId, /^PAYID-SB-[A-Z2-9]{8}$/);
+  assert.equal(txId, 'PAYID-SB-AAAAAAAA');
+
+  const token = generatePayPalSandboxCheckoutToken(() => 0.5);
+  assert.match(token, /^EC-SB[A-Z2-9]{10}$/);
+
+  // Payment method labels for both PayPal balance and Sandbox test cards
+  assert.equal(
+    formatPayPalSandboxPaymentMethod('paypal_balance', 'PAYID-SB-12345678'),
+    'PayPal Sandbox · Saldo (PAYID-SB-12345678)'
+  );
+  assert.equal(
+    formatPayPalSandboxPaymentMethod('sandbox_card', 'PAYID-SB-87654321', 'Visa', '7000'),
+    'PayPal Sandbox · Visa •••• 7000 (PAYID-SB-87654321)'
+  );
+
+  // Includes both approved and declined sandbox test cards for QA
+  assert.equal(SANDBOX_TEST_CARDS.some((c) => !c.shouldDecline), true);
+  assert.equal(SANDBOX_TEST_CARDS.some((c) => c.shouldDecline), true);
+
+  // Checkout strictly requires an authenticated client AND non-empty cart
+  assert.equal(canProceedToPayPalCheckout(null, 2), false);
+  assert.equal(canProceedToPayPalCheckout(undefined, 1), false);
+  assert.equal(canProceedToPayPalCheckout({ id: 'CLI-01' }, 0), false);
+  assert.equal(canProceedToPayPalCheckout({ id: 'CLI-01' }, 2), true);
 });
