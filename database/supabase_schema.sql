@@ -322,15 +322,5 @@ INSERT INTO public.supplements (id, name, category, tag, daily_dose, systolic_ef
   ('SUP-SAL', 'Sal Refinada / Sodio Dietético', 'Minerales', 'Retención & Volemia', 'Consumo habitual >5g/día NaCl', 6.00, 4.00, 1.50, -3, 0.120, 0.050, NULL, 'Exceso de cloruro de sodio en la dieta habitual. Incrementa la volemia y la rigidez arterial.', 'Aumenta la reabsorción tubular de agua vía osmosis y eleva la resistencia vascular periférica.', NULL)
 ON CONFLICT (id) DO NOTHING;
 
-INSERT INTO public.sales_history (week, week_label, revenue, units, orders_count) VALUES
-  (1, 'Sem 1', 2420.00, 58, 31),
-  (2, 'Sem 2', 2680.00, 64, 35),
-  (3, 'Sem 3', 2590.00, 61, 33),
-  (4, 'Sem 4', 2940.00, 70, 39),
-  (5, 'Sem 5', 3180.00, 76, 42),
-  (6, 'Sem 6', 3410.00, 82, 46),
-  (7, 'Sem 7', 3350.00, 79, 44),
-  (8, 'Sem 8', 3720.00, 89, 51),
-  (9, 'Sem 9', 3960.00, 94, 55),
-  (10, 'Sem 10', 4210.00, 101, 58)
-ON CONFLICT (week) DO NOTHING;
+-- NOTA: La regresión lineal OLS y las estadísticas de ventas se calculan
+-- directamente desde los pedidos reales registrados en public.orders + public.order_items.

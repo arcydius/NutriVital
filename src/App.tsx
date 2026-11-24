@@ -27,13 +27,11 @@ import {
   OrderReceipt,
   Product,
   ProductCategory,
-  SaleRecord,
 } from './types/nutrivital';
 import {
   INITIAL_ADMIN_USERS,
   INITIAL_CLIENT_USERS,
   INITIAL_PRODUCTS,
-  INITIAL_SALES_HISTORY,
 } from './data/seedData';
 import {
   calculateCartSummary,
@@ -59,7 +57,7 @@ import { nutriApi } from './services/api';
 
 const STORAGE_KEYS = {
   PRODUCTS: 'nutrivital_products_v1',
-  SALES: 'nutrivital_sales_v1',
+  ORDERS: 'nutrivital_orders_v1',
   ADMINS: 'nutrivital_admins_v1',
   SESSION: 'nutrivital_admin_session_v1',
   CLIENTS: 'nutrivital_clients_v2',
@@ -74,15 +72,6 @@ export default function App() {
       return saved ? JSON.parse(saved) : INITIAL_PRODUCTS;
     } catch {
       return INITIAL_PRODUCTS;
-    }
-  });
-
-  const [salesHistory, setSalesHistory] = useState<SaleRecord[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.SALES);
-      return saved ? JSON.parse(saved) : INITIAL_SALES_HISTORY;
-    } catch {
-      return INITIAL_SALES_HISTORY;
     }
   });
 
@@ -225,7 +214,14 @@ export default function App() {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
   const [authModalMode, setAuthModalMode] = useState<'login' | 'register'>('login');
   const [recentlyAddedId, setRecentlyAddedId] = useState<string | null>(null);
-  const [recentOrders, setRecentOrders] = useState<OrderReceipt[]>([]);
+  const [recentOrders, setRecentOrders] = useState<OrderReceipt[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.ORDERS);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
 
   // Hydrate initial state from Supabase if configured
   useEffect(() => {
@@ -235,10 +231,9 @@ export default function App() {
     void nutriApi.fetchInitialState().then((cloud) => {
       if (!mounted || !cloud) return;
       if (cloud.products.length > 0) setProducts(cloud.products);
-      if (cloud.salesHistory.length > 0) setSalesHistory(cloud.salesHistory);
       if (cloud.clients.length > 0) setClients(cloud.clients);
       if (cloud.adminUsers.length > 0) setAdminUsers(cloud.adminUsers);
-      if (cloud.recentOrders.length > 0) setRecentOrders(cloud.recentOrders);
+      setRecentOrders(cloud.recentOrders);
     });
 
     return () => {
@@ -256,11 +251,11 @@ export default function App() {
 
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEYS.SALES, JSON.stringify(salesHistory));
+      localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(recentOrders));
     } catch {
       // Ignore storage errors
     }
-  }, [salesHistory]);
+  }, [recentOrders]);
 
   useEffect(() => {
     try {
@@ -358,49 +353,17 @@ export default function App() {
     const updatedProducts = deductInventoryAfterPurchase(products, cart);
     setProducts(updatedProducts);
 
-    const lastRec = salesHistory[salesHistory.length - 1];
-    const updatedSalesWeek: SaleRecord = lastRec
-      ? {
-          ...lastRec,
-          revenue: Number((lastRec.revenue + summary.total).toFixed(2)),
-          units: lastRec.units + summary.totalItems,
-          ordersCount: lastRec.ordersCount + 1,
-        }
-      : {
-          week: 1,
-          weekLabel: 'Sem 1',
-          revenue: Math.round(summary.total),
-          units: summary.totalItems,
-          ordersCount: 1,
-        };
-
-    // Record transaction in latest week of salesHistory for Admin OLS regression
-    setSalesHistory((prev) => {
-      if (prev.length === 0) {
-        return [updatedSalesWeek];
-      }
-      const lastIdx = prev.length - 1;
-      return prev.map((rec, idx) =>
-        idx === lastIdx
-          ? {
-              ...rec,
-              revenue: Number((rec.revenue + summary.total).toFixed(2)),
-              units: rec.units + summary.totalItems,
-              ordersCount: rec.ordersCount + 1,
-            }
-          : rec
-      );
-    });
-
+    const now = new Date();
     const receipt: OrderReceipt = {
       id: `NV-${Math.floor(1000 + Math.random() * 9000)}`,
-      createdAt: new Date().toLocaleDateString('es-ES', {
+      createdAt: now.toLocaleDateString('es-ES', {
         day: '2-digit',
         month: 'short',
         year: 'numeric',
         hour: '2-digit',
         minute: '2-digit',
       }),
+      createdAtIso: now.toISOString(),
       customerName,
       customerEmail,
       paymentMethod: 'Pago Verificado NutriVital Pay',
@@ -419,12 +382,7 @@ export default function App() {
 
     setRecentOrders((prev) => [receipt, ...prev]);
     setCart([]);
-    void nutriApi.recordOrderToDb(
-      receipt,
-      updatedProducts,
-      updatedSalesWeek,
-      currentClient?.id
-    );
+    void nutriApi.recordOrderToDb(receipt, updatedProducts, currentClient?.id);
     return receipt;
   };
 
@@ -724,24 +682,6 @@ export default function App() {
     void nutriApi.deleteProductFromDb(productId);
   };
 
-  const handleAddWeekSale = (revenue: number, units: number) => {
-    const nextWeek = salesHistory.length + 1;
-    const newRecord: SaleRecord = {
-      week: nextWeek,
-      weekLabel: `Sem ${nextWeek}`,
-      revenue,
-      units,
-      ordersCount: Math.max(1, Math.round(units / 1.8)),
-    };
-    setSalesHistory((prev) => [...prev, newRecord]);
-    void nutriApi.upsertSalesWeekToDb(newRecord);
-  };
-
-  const handleResetSalesHistory = () => {
-    setSalesHistory(INITIAL_SALES_HISTORY);
-    void nutriApi.resetSalesHistoryInDb(INITIAL_SALES_HISTORY);
-  };
-
   return (
     <div className="min-h-screen flex flex-col bg-[#F8FAFC] text-slate-900">
       {/* STRICT 3-ZONE TOP BAR CONTRACT */}
@@ -989,14 +929,11 @@ export default function App() {
             session={adminSession}
             adminUsers={adminUsers}
             products={products}
-            salesHistory={salesHistory}
             recentOrders={recentOrders}
             onAddProduct={handleAddProduct}
             onUpdateProduct={handleUpdateProduct}
             onBulkUpdateProducts={handleBulkUpdateProducts}
             onDeleteProduct={handleDeleteProduct}
-            onAddWeekSale={handleAddWeekSale}
-            onResetSalesHistory={handleResetSalesHistory}
             onLogout={handleAdminLogout}
             onOpenRegisterAdmin={() => {
               setAuthModalMode('register');

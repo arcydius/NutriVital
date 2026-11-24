@@ -15,12 +15,10 @@ import {
   ProductCategory,
   ProductStatus,
   ProductTag,
-  SaleRecord,
 } from '../types/nutrivital';
 
 export interface CloudInitialState {
   products: Product[];
-  salesHistory: SaleRecord[];
   clients: ClientUser[];
   adminUsers: AdminUser[];
   recentOrders: OrderReceipt[];
@@ -127,14 +125,6 @@ interface DbOrderItemRow {
   line_total: number | string;
 }
 
-interface DbSaleRow {
-  week: number | string;
-  week_label: string;
-  revenue: number | string;
-  units: number | string;
-  orders_count: number | string;
-}
-
 function mapProductRow(row: DbProductRow): Product {
   return {
     id: row.id,
@@ -200,7 +190,6 @@ export const nutriApi = {
     try {
       const [
         productsRes,
-        salesRes,
         usersRes,
         biometricsRes,
         goalsRes,
@@ -210,13 +199,12 @@ export const nutriApi = {
         orderItemsRes,
       ] = await Promise.all([
         supabase.from('products').select('*').order('created_at', { ascending: false }),
-        supabase.from('sales_history').select('*').order('week', { ascending: true }),
         supabase.from('users').select('*').order('created_at', { ascending: true }),
         supabase.from('user_biometrics').select('*'),
         supabase.from('user_health_goals').select('*'),
         supabase.from('user_active_supplements').select('user_id, supplement_id'),
         supabase.from('medical_reports').select('*').order('created_at', { ascending: false }),
-        supabase.from('orders').select('*').order('created_at', { ascending: false }).limit(25),
+        supabase.from('orders').select('*').order('created_at', { ascending: false }),
         supabase.from('order_items').select('*'),
       ]);
 
@@ -229,14 +217,6 @@ export const nutriApi = {
       }
 
       const products = ((productsRes.data || []) as DbProductRow[]).map(mapProductRow);
-
-      const salesHistory: SaleRecord[] = ((salesRes.data || []) as DbSaleRow[]).map((s) => ({
-        week: Number(s.week),
-        weekLabel: s.week_label,
-        revenue: Number(s.revenue),
-        units: Number(s.units),
-        ordersCount: Number(s.orders_count),
-      }));
 
       const bioMap = new Map<string, ClientBiometrics>();
       for (const b of (biometricsRes.data || []) as DbBiometricsRow[]) {
@@ -337,6 +317,7 @@ export const nutriApi = {
       const recentOrders: OrderReceipt[] = ((ordersRes.data || []) as DbOrderRow[]).map((o) => ({
         id: o.id,
         createdAt: o.created_at_label || o.created_at.substring(0, 16),
+        createdAtIso: o.created_at,
         customerName: o.customer_name,
         customerEmail: o.customer_email,
         paymentMethod: o.payment_method,
@@ -347,7 +328,7 @@ export const nutriApi = {
         total: Number(o.total),
       }));
 
-      return { products, salesHistory, clients, adminUsers, recentOrders };
+      return { products, clients, adminUsers, recentOrders };
     } catch (err) {
       console.warn('Error cargando estado desde Supabase:', err);
       return null;
@@ -685,7 +666,6 @@ export const nutriApi = {
   async recordOrderToDb(
     receipt: OrderReceipt,
     updatedProducts: Product[],
-    updatedSalesWeek: SaleRecord,
     userId?: string
   ) {
     if (!supabase) return null;
@@ -733,56 +713,9 @@ export const nutriApi = {
         if (reportSupabaseError('recordOrderToDb (products stock)', res.error)) return null;
       }
 
-      const salesOk = await this.upsertSalesWeekToDb(updatedSalesWeek);
-      if (!salesOk) return null;
       return true;
     } catch (err) {
       console.error('[NutriVital Supabase] Excepción registrando orden:', err);
-      return null;
-    }
-  },
-
-  async upsertSalesWeekToDb(record: SaleRecord) {
-    if (!supabase) return null;
-    try {
-      const { error } = await supabase.from('sales_history').upsert(
-        {
-          week: record.week,
-          week_label: record.weekLabel,
-          revenue: record.revenue,
-          units: record.units,
-          orders_count: record.ordersCount,
-        },
-        { onConflict: 'week' }
-      );
-      if (reportSupabaseError('upsertSalesWeekToDb', error)) return null;
-      return true;
-    } catch (err) {
-      console.error('[NutriVital Supabase] Excepción guardando semana de ventas:', err);
-      return null;
-    }
-  },
-
-  async resetSalesHistoryInDb(initialRecords: SaleRecord[]) {
-    if (!supabase) return null;
-    try {
-      const { error: delErr } = await supabase.from('sales_history').delete().gte('week', 0);
-      if (reportSupabaseError('resetSalesHistoryInDb (delete)', delErr)) return null;
-      if (initialRecords.length > 0) {
-        const { error: insErr } = await supabase.from('sales_history').insert(
-          initialRecords.map((r) => ({
-            week: r.week,
-            week_label: r.weekLabel,
-            revenue: r.revenue,
-            units: r.units,
-            orders_count: r.ordersCount,
-          }))
-        );
-        if (reportSupabaseError('resetSalesHistoryInDb (insert)', insErr)) return null;
-      }
-      return true;
-    } catch (err) {
-      console.error('[NutriVital Supabase] Excepción reiniciando historial de ventas:', err);
       return null;
     }
   },

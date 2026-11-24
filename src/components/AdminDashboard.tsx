@@ -9,7 +9,6 @@ import {
   ShieldCheck,
   LogOut,
   Calculator,
-  RotateCcw,
   Users,
   Check,
   X,
@@ -21,6 +20,8 @@ import {
   ChevronUp,
   Layers,
   ArrowUpDown,
+  Award,
+  BarChart3,
 } from 'lucide-react';
 import {
   AdminSession,
@@ -30,10 +31,12 @@ import {
   Product,
   ProductCategory,
   ProductTag,
-  SaleRecord,
+  SalesAggregationPeriod,
 } from '../types/nutrivital';
 import {
+  aggregateOrdersToSalesSeries,
   calculateOrdinaryLinearRegression,
+  calculateTopSellingProducts,
   computeProductStatus,
 } from '../utils/analytics';
 import { ProductIllustration } from './ProductIllustration';
@@ -42,14 +45,11 @@ interface AdminDashboardProps {
   session: AdminSession;
   adminUsers: AdminUser[];
   products: Product[];
-  salesHistory: SaleRecord[];
   recentOrders: OrderReceipt[];
   onAddProduct: (product: Product) => void;
   onUpdateProduct: (product: Product) => void;
   onBulkUpdateProducts: (products: Product[]) => void;
   onDeleteProduct: (productId: string) => void;
-  onAddWeekSale: (revenue: number, units: number) => void;
-  onResetSalesHistory: () => void;
   onLogout: () => void;
   onOpenRegisterAdmin: () => void;
 }
@@ -86,18 +86,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   session,
   adminUsers,
   products,
-  salesHistory,
   recentOrders,
   onAddProduct,
   onUpdateProduct,
   onBulkUpdateProducts,
   onDeleteProduct,
-  onAddWeekSale,
-  onResetSalesHistory,
   onLogout,
   onOpenRegisterAdmin,
 }) => {
   const [regressionMetric, setRegressionMetric] = useState<'revenue' | 'units'>('revenue');
+  const [salesPeriod, setSalesPeriod] = useState<SalesAggregationPeriod>('day');
 
   // Product Table Filtering, Sorting & Bulk Selection State
   const [searchQuery, setSearchQuery] = useState('');
@@ -130,38 +128,62 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [formDescription, setFormDescription] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
 
-  // Safe Confirmation Modals & Expanded Orders
+  // Safe Confirmation Modal & Expanded Orders
   const [productPendingDelete, setProductPendingDelete] = useState<Product | null>(null);
-  const [confirmResetSales, setConfirmResetSales] = useState<boolean>(false);
   const [expandedOrderIds, setExpandedOrderIds] = useState<Set<string>>(new Set());
 
-  // Sales Week Simulator inputs
-  const [simRevenue, setSimRevenue] = useState('4480');
-  const [simUnits, setSimUnits] = useState('108');
+  // 100% Real Sales Series derived exclusively from Supabase orders + order_items
+  const salesSeries = useMemo(
+    () => aggregateOrdersToSalesSeries(recentOrders, salesPeriod),
+    [recentOrders, salesPeriod]
+  );
+
+  const topSellingProducts = useMemo(
+    () => calculateTopSellingProducts(recentOrders),
+    [recentOrders]
+  );
+
+  const hasEnoughPeriodsForOls = salesSeries.length >= 2;
 
   const regression = useMemo(
-    () => calculateOrdinaryLinearRegression(salesHistory, regressionMetric, 2),
-    [salesHistory, regressionMetric]
+    () => calculateOrdinaryLinearRegression(salesSeries, regressionMetric, 2),
+    [salesSeries, regressionMetric]
   );
 
   const revenueRegression = useMemo(
-    () => calculateOrdinaryLinearRegression(salesHistory, 'revenue', 2),
-    [salesHistory]
+    () => calculateOrdinaryLinearRegression(salesSeries, 'revenue', 2),
+    [salesSeries]
   );
 
   const unitsRegression = useMemo(
-    () => calculateOrdinaryLinearRegression(salesHistory, 'units', 2),
-    [salesHistory]
+    () => calculateOrdinaryLinearRegression(salesSeries, 'units', 2),
+    [salesSeries]
   );
 
   const totalRevenue = useMemo(
-    () => salesHistory.reduce((acc, s) => acc + s.revenue, 0),
-    [salesHistory]
+    () => recentOrders.reduce((acc, o) => acc + o.total, 0),
+    [recentOrders]
   );
   const totalUnitsSold = useMemo(
-    () => salesHistory.reduce((acc, s) => acc + s.units, 0),
-    [salesHistory]
+    () =>
+      recentOrders.reduce(
+        (acc, o) => acc + o.items.reduce((sum, item) => sum + item.quantity, 0),
+        0
+      ),
+    [recentOrders]
   );
+  const averageOrderTicket = useMemo(
+    () => (recentOrders.length > 0 ? totalRevenue / recentOrders.length : 0),
+    [recentOrders.length, totalRevenue]
+  );
+
+  const periodUnitLabel: Record<SalesAggregationPeriod, { singular: string; plural: string; next: string }> = {
+    day: { singular: 'día', plural: 'días', next: 'Próximo día' },
+    week: { singular: 'semana', plural: 'semanas', next: 'Próxima semana' },
+    month: { singular: 'mes', plural: 'meses', next: 'Próximo mes' },
+    order: { singular: 'pedido', plural: 'pedidos', next: 'Próximo pedido' },
+  };
+  const activePeriodText = periodUnitLabel[salesPeriod];
   const totalInventoryUnits = useMemo(
     () => products.reduce((acc, p) => acc + p.stock, 0),
     [products]
@@ -238,17 +260,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   // Escape key handler for open modals
   useEffect(() => {
-    if (!isProductModalOpen && !productPendingDelete && !confirmResetSales) return;
+    if (!isProductModalOpen && !productPendingDelete) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setIsProductModalOpen(false);
         setProductPendingDelete(null);
-        setConfirmResetSales(false);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isProductModalOpen, productPendingDelete, confirmResetSales]);
+  }, [isProductModalOpen, productPendingDelete]);
 
   const handleOpenAddModal = () => {
     setEditingProductId(null);
@@ -534,16 +555,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     });
   };
 
-  const handleAddSimulatedWeek = (e: React.FormEvent) => {
-    e.preventDefault();
-    const rev = Number(simRevenue);
-    const uni = Number(simUnits);
-    if (Number.isNaN(rev) || rev <= 0 || Number.isNaN(uni) || uni <= 0) return;
-    onAddWeekSale(Math.round(rev), Math.round(uni));
-    setSimRevenue(String(Math.round(rev + 240)));
-    setSimUnits(String(Math.round(uni + 6)));
-  };
-
   // Ordinary Linear Regression Chart Geometry (Strictly Non-Logarithmic Linear Scale)
   const svgW = 780;
   const svgH = 340;
@@ -561,13 +572,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const maxX =
     regression.points.length > 0
       ? regression.points[regression.points.length - 1].x
-      : 12;
+      : 4;
 
   const rawMinY = allYValues.length > 0 ? Math.min(...allYValues) : 0;
-  const rawMaxY = allYValues.length > 0 ? Math.max(...allYValues) : 5000;
-  const yPadding = Math.max(50, (rawMaxY - rawMinY) * 0.18);
-  const yMinDomain = Math.max(0, Math.floor((rawMinY - yPadding) / 100) * 100);
-  const yMaxDomain = Math.ceil((rawMaxY + yPadding) / 100) * 100 || 1000;
+  const rawMaxY = allYValues.length > 0 ? Math.max(...allYValues) : 100;
+  const spanY = Math.max(1, rawMaxY - rawMinY);
+  const yPadding = Math.max(regressionMetric === 'revenue' ? 15 : 1, spanY * 0.22);
+  const tickStep = regressionMetric === 'revenue' ? (rawMaxY > 500 ? 100 : 10) : 1;
+  const yMinDomain = Math.max(0, Math.floor((rawMinY - yPadding) / tickStep) * tickStep);
+  const yMaxDomain = Math.max(
+    yMinDomain + tickStep * 4,
+    Math.ceil((rawMaxY + yPadding) / tickStep) * tickStep
+  );
 
   const mapX = (x: number) => {
     if (maxX <= minX) return padL + plotW / 2;
@@ -646,33 +662,39 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           </div>
         </div>
 
-        {/* Executive KPI Strip */}
+        {/* Executive KPI Strip (100% Real Data from Supabase orders + order_items + products) */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
           <div className="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-2xs">
             <div className="flex items-center justify-between text-xs text-slate-500 font-medium">
-              <span>Ingresos Acumulados ({salesHistory.length} sem)</span>
+              <span>Ingresos Reales ({recentOrders.length} pedidos)</span>
               <DollarSign className="w-4 h-4 text-emerald-600" />
             </div>
             <p className="mt-2 text-2xl font-bold text-slate-900 font-mono tabular-nums">
               ${totalRevenue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </p>
             <p className="mt-1 text-xs text-emerald-700 font-mono tabular-nums">
-              Pendiente m = {revenueRegression.slope >= 0 ? `+$${revenueRegression.slope.toFixed(2)}` : `-$${Math.abs(revenueRegression.slope).toFixed(2)}`} / sem
+              {hasEnoughPeriodsForOls
+                ? `Pendiente m = ${revenueRegression.slope >= 0 ? `+$${revenueRegression.slope.toFixed(2)}` : `-$${Math.abs(revenueRegression.slope).toFixed(2)}`} / ${activePeriodText.singular}`
+                : recentOrders.length > 0
+                  ? `Ticket promedio: $${averageOrderTicket.toFixed(2)}`
+                  : 'Sin ventas registradas aún'}
             </p>
           </div>
 
           <div className="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-2xs">
             <div className="flex items-center justify-between text-xs text-slate-500 font-medium">
-              <span>Unidades Vendidas</span>
+              <span>Unidades Reales Vendidas</span>
               <TrendingUp className="w-4 h-4 text-emerald-600" />
             </div>
             <p className="mt-2 text-2xl font-bold text-slate-900 font-mono tabular-nums">
               {totalUnitsSold.toLocaleString('en-US')} uds
             </p>
             <p className="mt-1 text-xs text-slate-500 font-mono tabular-nums">
-              {regressionMetric === 'units'
-                ? `Pendiente m = ${unitsRegression.slope >= 0 ? `+${unitsRegression.slope.toFixed(2)}` : unitsRegression.slope.toFixed(2)} uds / sem`
-                : `Ajuste lineal R² = ${regression.rSquared.toFixed(4)}`}
+              {hasEnoughPeriodsForOls
+                ? regressionMetric === 'units'
+                  ? `Pendiente m = ${unitsRegression.slope >= 0 ? `+${unitsRegression.slope.toFixed(2)}` : unitsRegression.slope.toFixed(2)} uds / ${activePeriodText.singular}`
+                  : `Ajuste lineal R² = ${regression.rSquared.toFixed(4)}`
+                : 'Extraído de order_items'}
             </p>
           </div>
 
@@ -698,21 +720,25 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
           <div className="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-2xs">
             <div className="flex items-center justify-between text-xs text-slate-500 font-medium">
-              <span>Proyección Próxima Semana</span>
+              <span>Proyección ({activePeriodText.next})</span>
               <Calculator className="w-4 h-4 text-emerald-600" />
             </div>
             <p className="mt-2 text-2xl font-bold text-emerald-700 font-mono tabular-nums">
-              {regressionMetric === 'revenue'
-                ? `$${regression.nextWeekPrediction.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                : `${Math.round(regression.nextWeekPrediction).toLocaleString('en-US')} uds`}
+              {hasEnoughPeriodsForOls
+                ? regressionMetric === 'revenue'
+                  ? `$${Math.max(0, regression.nextWeekPrediction).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                  : `${Math.max(0, Math.round(regression.nextWeekPrediction)).toLocaleString('en-US')} uds`
+                : '—'}
             </p>
             <p className="mt-1 text-xs text-slate-500 font-mono tabular-nums">
-              Evaluado en x = Semana {salesHistory.length + 1}
+              {hasEnoughPeriodsForOls
+                ? `Evaluado en x = ${salesSeries.length + 1} (${salesSeries.length} ${activePeriodText.plural})`
+                : `Requiere ≥2 ${activePeriodText.plural} con ventas`}
             </p>
           </div>
         </div>
 
-        {/* SECTION 1: ORDINARY LEAST SQUARES LINEAR REGRESSION (y = mx + b) */}
+        {/* SECTION 1: 100% REAL ORDINARY LEAST SQUARES LINEAR REGRESSION (y = mx + b) */}
         <section
           aria-labelledby="ols-regression-heading"
           className="bg-white rounded-2xl border border-slate-200/90 shadow-xs p-6 lg:p-8 space-y-6"
@@ -720,20 +746,46 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-100 pb-5">
             <div>
               <p className="text-xs font-medium text-emerald-700">
-                Módulo Analítico de Ventas · Mínimos Cuadrados Ordinarios (OLS)
+                Analítica Real de Ventas · Calculada desde orders & order_items (Sin simulaciones)
               </p>
               <h2
                 id="ols-regression-heading"
                 className="text-xl md:text-2xl font-bold text-slate-900 mt-0.5"
               >
-                Proyección de Ventas (Modelo Lineal)
+                Regresión Lineal de Ventas Reales (OLS)
               </h2>
               <p className="text-xs text-slate-500 mt-1">
-                Escala estrictamente cartesiana lineal sin transformaciones logarítmicas ni suavizados polinómicos: <strong className="font-mono text-slate-700">y = mx + b</strong>
+                Escala cartesiana lineal <strong className="font-mono text-slate-700">y = mx + b</strong> alimentada exclusivamente con pedidos reales de Supabase.
               </p>
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
+              {/* Period Aggregation Selector */}
+              <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl">
+                {(
+                  [
+                    { id: 'day', label: 'Por Día' },
+                    { id: 'week', label: 'Por Semana' },
+                    { id: 'month', label: 'Por Mes' },
+                    { id: 'order', label: 'Por Pedido' },
+                  ] as { id: SalesAggregationPeriod; label: string }[]
+                ).map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => setSalesPeriod(p.id)}
+                    className={`px-2.5 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap ${
+                      salesPeriod === p.id
+                        ? 'bg-emerald-700 text-white shadow-2xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Metric Selector */}
               <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl">
                 <button
                   type="button"
@@ -758,177 +810,227 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   Unidades Vendidas
                 </button>
               </div>
-
-              <button
-                type="button"
-                onClick={() => setConfirmResetSales(true)}
-                className="px-3 py-2 text-xs font-medium text-slate-600 hover:text-slate-900 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl transition-colors flex items-center gap-1.5 whitespace-nowrap"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                <span>Restaurar Serie Base</span>
-              </button>
             </div>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-            {/* Scatter Plot + Straight OLS Line */}
+            {/* Scatter Plot + Straight OLS Line (or Honest Empty / Insufficient-Periods State) */}
             <div className="lg:col-span-8 space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-600">
-                <div className="flex flex-wrap items-center gap-4">
-                  <span className="flex items-center gap-1.5">
-                    <span className="w-3 h-3 rounded-full bg-[#15803D] inline-block" />
-                    Datos Reales Históricos (Dispersión)
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <span className="w-4 h-0.5 bg-[#16A34A] inline-block" />
-                    Recta de Ajuste Lineal ({regression.equation})
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <span className="w-3 h-3 rounded-full border-2 border-emerald-500 bg-white inline-block" />
-                    Proyección Lineal (+2 semanas)
-                  </span>
+              {!hasEnoughPeriodsForOls ? (
+                <div className="rounded-2xl bg-[#F8FAFC] border border-dashed border-slate-300 p-8 text-center space-y-4">
+                  <div className="w-12 h-12 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-700 flex items-center justify-center mx-auto">
+                    <BarChart3 className="w-6 h-6" />
+                  </div>
+
+                  {salesSeries.length === 0 ? (
+                    <div className="space-y-1.5 max-w-md mx-auto">
+                      <h3 className="text-base font-bold text-slate-900">
+                        Sin ventas reales registradas aún
+                      </h3>
+                      <p className="text-xs text-slate-600 leading-relaxed">
+                        Ya no se muestran semanas ficticias ni datos simulados. En cuanto se registren compras reales en la tienda, aquí aparecerán los puntos reales y la recta de regresión lineal <strong className="font-mono">y = mx + b</strong>.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3 max-w-lg mx-auto">
+                      <h3 className="text-base font-bold text-slate-900">
+                        Solo hay ventas en 1 {activePeriodText.singular} ({salesSeries[0].weekLabel})
+                      </h3>
+                      <div className="inline-flex flex-wrap items-center justify-center gap-3 px-4 py-2 rounded-xl bg-white border border-emerald-200 text-xs font-mono text-slate-800">
+                        <span>
+                          Ingresos: <strong className="text-emerald-700">${salesSeries[0].revenue.toFixed(2)}</strong>
+                        </span>
+                        <span className="text-slate-300">|</span>
+                        <span>
+                          Unidades: <strong>{salesSeries[0].units} uds</strong>
+                        </span>
+                        <span className="text-slate-300">|</span>
+                        <span>
+                          Pedidos: <strong>{salesSeries[0].ordersCount}</strong>
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-600 leading-relaxed">
+                        Matemáticamente, una regresión lineal ordinaria (<span className="font-mono">y = mx + b</span>) requiere al menos <strong>2 {activePeriodText.plural} distintos</strong> con ventas reales para calcular la pendiente <span className="font-mono">m</span> y proyectar tendencia.
+                      </p>
+                      {recentOrders.length >= 2 && salesPeriod !== 'order' && (
+                        <button
+                          type="button"
+                          onClick={() => setSalesPeriod('order')}
+                          className="px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold transition-colors shadow-2xs"
+                        >
+                          Ver regresión real Por Pedido ({recentOrders.length} pedidos de hoy)
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
-              </div>
+              ) : (
+                <>
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-600">
+                    <div className="flex flex-wrap items-center gap-4">
+                      <span className="flex items-center gap-1.5">
+                        <span className="w-3 h-3 rounded-full bg-[#15803D] inline-block" />
+                        Ventas Reales ({salesSeries.length} {activePeriodText.plural})
+                      </span>
+                      <span className="flex items-center gap-1.5">
+                        <span className="w-4 h-0.5 bg-[#16A34A] inline-block" />
+                        Recta OLS ({regression.equation})
+                      </span>
+                      <span className="flex items-center gap-1.5">
+                        <span className="w-3 h-3 rounded-full border-2 border-emerald-500 bg-white inline-block" />
+                        Proyección (+2 {activePeriodText.plural})
+                      </span>
+                    </div>
+                  </div>
 
-              <div className="w-full overflow-x-auto bg-[#F8FAFC] rounded-2xl border border-slate-200/80 p-4">
-                <svg
-                  viewBox={`0 0 ${svgW} ${svgH}`}
-                  className="w-full h-auto min-w-[560px]"
-                  role="img"
-                  aria-label={`Gráfica de regresión lineal ordinaria ${regression.equation}`}
-                >
-                  {yTicks.map((tickVal) => {
-                    const yPos = mapY(tickVal);
-                    return (
-                      <g key={tickVal}>
-                        <line
-                          x1={padL}
-                          y1={yPos}
-                          x2={svgW - padR}
-                          y2={yPos}
-                          stroke="#E2E8F0"
-                          strokeWidth="1"
-                        />
-                        <text
-                          x={padL - 10}
-                          y={yPos + 4}
-                          textAnchor="end"
-                          className="text-[11px] fill-slate-500 font-mono"
-                        >
-                          {regressionMetric === 'revenue' ? `$${tickVal}` : `${tickVal}`}
-                        </text>
-                      </g>
-                    );
-                  })}
+                  <div className="w-full overflow-x-auto bg-[#F8FAFC] rounded-2xl border border-slate-200/80 p-4">
+                    <svg
+                      viewBox={`0 0 ${svgW} ${svgH}`}
+                      className="w-full h-auto min-w-[560px]"
+                      role="img"
+                      aria-label={`Gráfica de regresión lineal real ${regression.equation}`}
+                    >
+                      {yTicks.map((tickVal) => {
+                        const yPos = mapY(tickVal);
+                        return (
+                          <g key={tickVal}>
+                            <line
+                              x1={padL}
+                              y1={yPos}
+                              x2={svgW - padR}
+                              y2={yPos}
+                              stroke="#E2E8F0"
+                              strokeWidth="1"
+                            />
+                            <text
+                              x={padL - 10}
+                              y={yPos + 4}
+                              textAnchor="end"
+                              className="text-[11px] fill-slate-500 font-mono"
+                            >
+                              {regressionMetric === 'revenue' ? `$${tickVal}` : `${tickVal}`}
+                            </text>
+                          </g>
+                        );
+                      })}
 
-                  {regression.points.map((pt) => {
-                    const xPos = mapX(pt.x);
-                    return (
-                      <g key={pt.x}>
-                        <line
-                          x1={xPos}
-                          y1={padT}
-                          x2={xPos}
-                          y2={padT + plotH}
-                          stroke={pt.isForecast ? '#DCFCE7' : '#F1F5F9'}
-                          strokeWidth="1"
-                        />
-                        <text
-                          x={xPos}
-                          y={svgH - 16}
-                          textAnchor="middle"
-                          className={`text-[10px] font-mono ${
-                            pt.isForecast ? 'fill-emerald-700 font-semibold' : 'fill-slate-500'
-                          }`}
-                        >
-                          S{pt.x}
-                        </text>
-                      </g>
-                    );
-                  })}
+                      {regression.points.map((pt, idx) => {
+                        const xPos = mapX(pt.x);
+                        const forecastStep = pt.x - salesSeries.length;
+                        const xLabel = pt.isForecast
+                          ? `+${forecastStep}`
+                          : salesSeries[idx]?.weekLabel || `P${pt.x}`;
+                        return (
+                          <g key={pt.x}>
+                            <line
+                              x1={xPos}
+                              y1={padT}
+                              x2={xPos}
+                              y2={padT + plotH}
+                              stroke={pt.isForecast ? '#DCFCE7' : '#F1F5F9'}
+                              strokeWidth="1"
+                            />
+                            <text
+                              x={xPos}
+                              y={svgH - 16}
+                              textAnchor="middle"
+                              className={`text-[10px] font-mono ${
+                                pt.isForecast ? 'fill-emerald-700 font-semibold' : 'fill-slate-500'
+                              }`}
+                            >
+                              {xLabel}
+                            </text>
+                          </g>
+                        );
+                      })}
 
-                  {regression.points.map((pt) => {
-                    if (pt.actualY === null) return null;
-                    const xPos = mapX(pt.x);
-                    const yActual = mapY(pt.actualY);
-                    const yPred = mapY(pt.predictedY);
-                    return (
-                      <line
-                        key={`res-${pt.x}`}
-                        x1={xPos}
-                        y1={yActual}
-                        x2={xPos}
-                        y2={yPred}
-                        stroke="#86EFAC"
-                        strokeWidth="1.5"
-                        strokeDasharray="3 3"
-                      />
-                    );
-                  })}
-
-                  <line
-                    x1={mapX(xStart)}
-                    y1={mapY(yStart)}
-                    x2={mapX(xEnd)}
-                    y2={mapY(yEnd)}
-                    stroke="#16A34A"
-                    strokeWidth="3"
-                  />
-
-                  {regression.points.map((pt) => {
-                    const xPos = mapX(pt.x);
-                    if (pt.actualY !== null) {
-                      const yActual = mapY(pt.actualY);
-                      return (
-                        <g key={`pt-${pt.x}`}>
-                          <circle
-                            cx={xPos}
-                            cy={yActual}
-                            r={5.5}
-                            fill="#15803D"
-                            stroke="#FFFFFF"
-                            strokeWidth="2"
+                      {regression.points.map((pt) => {
+                        if (pt.actualY === null) return null;
+                        const xPos = mapX(pt.x);
+                        const yActual = mapY(pt.actualY);
+                        const yPred = mapY(pt.predictedY);
+                        return (
+                          <line
+                            key={`res-${pt.x}`}
+                            x1={xPos}
+                            y1={yActual}
+                            x2={xPos}
+                            y2={yPred}
+                            stroke="#86EFAC"
+                            strokeWidth="1.5"
+                            strokeDasharray="3 3"
                           />
-                          <text
-                            x={xPos}
-                            y={yActual - 10}
-                            textAnchor="middle"
-                            className="text-[10px] fill-slate-700 font-mono"
-                          >
-                            {regressionMetric === 'revenue' ? `$${pt.actualY}` : pt.actualY}
-                          </text>
-                        </g>
-                      );
-                    }
-                    const yPred = mapY(pt.predictedY);
-                    return (
-                      <g key={`fc-${pt.x}`}>
-                        <circle
-                          cx={xPos}
-                          cy={yPred}
-                          r={5.5}
-                          fill="#FFFFFF"
-                          stroke="#16A34A"
-                          strokeWidth="2.5"
-                        />
-                        <text
-                          x={xPos}
-                          y={yPred - 10}
-                          textAnchor="middle"
-                          className="text-[10px] fill-emerald-700 font-mono font-semibold"
-                        >
-                          {regressionMetric === 'revenue'
-                            ? `$${pt.predictedY.toFixed(0)}`
-                            : pt.predictedY.toFixed(0)}
-                        </text>
-                      </g>
-                    );
-                  })}
-                </svg>
-              </div>
+                        );
+                      })}
+
+                      <line
+                        x1={mapX(xStart)}
+                        y1={mapY(Math.max(yMinDomain, Math.min(yMaxDomain, yStart)))}
+                        x2={mapX(xEnd)}
+                        y2={mapY(Math.max(yMinDomain, Math.min(yMaxDomain, yEnd)))}
+                        stroke="#16A34A"
+                        strokeWidth="3"
+                      />
+
+                      {regression.points.map((pt) => {
+                        const xPos = mapX(pt.x);
+                        if (pt.actualY !== null) {
+                          const yActual = mapY(pt.actualY);
+                          return (
+                            <g key={`pt-${pt.x}`}>
+                              <circle
+                                cx={xPos}
+                                cy={yActual}
+                                r={5.5}
+                                fill="#15803D"
+                                stroke="#FFFFFF"
+                                strokeWidth="2"
+                              />
+                              <text
+                                x={xPos}
+                                y={yActual - 10}
+                                textAnchor="middle"
+                                className="text-[10px] fill-slate-700 font-mono"
+                              >
+                                {regressionMetric === 'revenue'
+                                  ? `$${pt.actualY.toFixed(0)}`
+                                  : pt.actualY}
+                              </text>
+                            </g>
+                          );
+                        }
+                        const clampedPred = Math.max(0, pt.predictedY);
+                        const yPred = mapY(Math.max(yMinDomain, Math.min(yMaxDomain, clampedPred)));
+                        return (
+                          <g key={`fc-${pt.x}`}>
+                            <circle
+                              cx={xPos}
+                              cy={yPred}
+                              r={5.5}
+                              fill="#FFFFFF"
+                              stroke="#16A34A"
+                              strokeWidth="2.5"
+                            />
+                            <text
+                              x={xPos}
+                              y={yPred - 10}
+                              textAnchor="middle"
+                              className="text-[10px] fill-emerald-700 font-mono font-semibold"
+                            >
+                              {regressionMetric === 'revenue'
+                                ? `$${clampedPred.toFixed(0)}`
+                                : clampedPred.toFixed(0)}
+                            </text>
+                          </g>
+                        );
+                      })}
+                    </svg>
+                  </div>
+                </>
+              )}
             </div>
 
-            {/* Mathematical Model Box */}
+            {/* Mathematical Model Box + Real Top Selling Products (from order_items) */}
             <div className="lg:col-span-4 space-y-4">
               <div className="p-5 rounded-2xl bg-[#F0FDF4] border border-emerald-200 space-y-4">
                 <div>
@@ -937,9 +1039,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   </p>
                   <p
                     data-testid="ols-equation"
-                    className="mt-1.5 text-xl font-bold font-mono text-slate-900 bg-white px-3.5 py-2.5 rounded-xl border border-emerald-200 tabular-nums"
+                    className="mt-1.5 text-lg font-bold font-mono text-slate-900 bg-white px-3.5 py-2.5 rounded-xl border border-emerald-200 tabular-nums"
                   >
-                    {regression.equation}
+                    {hasEnoughPeriodsForOls ? regression.equation : 'Pendiente (≥2 períodos)'}
                   </p>
                 </div>
 
@@ -950,11 +1052,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       data-testid="ols-slope"
                       className="text-base font-bold text-slate-900 font-mono tabular-nums mt-0.5"
                     >
-                      {regression.slope >= 0
-                        ? `+${regression.slope.toFixed(2)}`
-                        : regression.slope.toFixed(2)}
+                      {hasEnoughPeriodsForOls
+                        ? regression.slope >= 0
+                          ? `+${regression.slope.toFixed(2)}`
+                          : regression.slope.toFixed(2)
+                        : '—'}
                     </p>
-                    <p className="text-[10px] text-emerald-700">Variación por semana (x)</p>
+                    <p className="text-[10px] text-emerald-700">
+                      Variación por {activePeriodText.singular}
+                    </p>
                   </div>
 
                   <div className="bg-white p-3 rounded-xl border border-emerald-100">
@@ -963,9 +1069,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       data-testid="ols-intercept"
                       className="text-base font-bold text-slate-900 font-mono tabular-nums mt-0.5"
                     >
-                      {regression.intercept.toFixed(2)}
+                      {hasEnoughPeriodsForOls ? regression.intercept.toFixed(2) : '—'}
                     </p>
-                    <p className="text-[10px] text-slate-500">Ordenada en el origen (x=0)</p>
+                    <p className="text-[10px] text-slate-500">Ordenada en x=0</p>
                   </div>
 
                   <div className="bg-white p-3 rounded-xl border border-emerald-100">
@@ -974,78 +1080,80 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       data-testid="ols-r2"
                       className="text-base font-bold text-emerald-700 font-mono tabular-nums mt-0.5"
                     >
-                      {regression.rSquared.toFixed(4)}
+                      {hasEnoughPeriodsForOls ? regression.rSquared.toFixed(4) : '—'}
                     </p>
                     <p className="text-[10px] text-slate-500">
-                      {(regression.rSquared * 100).toFixed(1)}% varianza explicada
+                      {hasEnoughPeriodsForOls
+                        ? `${(regression.rSquared * 100).toFixed(1)}% varianza explicada`
+                        : 'Sin recta activa'}
                     </p>
                   </div>
 
                   <div className="bg-white p-3 rounded-xl border border-emerald-100">
                     <p className="text-[11px] text-slate-500">Correlación Lineal (r)</p>
                     <p className="text-base font-bold text-slate-900 font-mono tabular-nums mt-0.5">
-                      {regression.correlation.toFixed(4)}
+                      {hasEnoughPeriodsForOls ? regression.correlation.toFixed(4) : '—'}
                     </p>
-                    <p className="text-[10px] text-slate-500">{correlationLabel}</p>
+                    <p className="text-[10px] text-slate-500">
+                      {hasEnoughPeriodsForOls ? correlationLabel : 'Esperando datos'}
+                    </p>
                   </div>
                 </div>
 
                 <div className="text-xs text-slate-600 leading-relaxed border-t border-emerald-200/70 pt-3">
-                  Cada compra completada en el carrito actualiza la semana activa (<strong className="font-mono">Sem {salesHistory.length}</strong>) y recalcula instantáneamente los coeficientes <strong className="font-mono">m</strong>, <strong className="font-mono">b</strong> y <strong className="font-mono">R²</strong>.
+                  Cada compra completada en la tienda se guarda en <strong className="font-mono">orders</strong> y <strong className="font-mono">order_items</strong> y recalcula automáticamente esta regresión en tiempo real.
                 </div>
               </div>
 
-              <form
-                onSubmit={handleAddSimulatedWeek}
-                className="p-4 rounded-2xl bg-white border border-slate-200 space-y-3"
-              >
-                <h3 className="text-xs font-bold text-slate-800">
-                  Simular Cierre de Semana {salesHistory.length + 1}
-                </h3>
-                <div className="grid grid-cols-2 gap-2.5">
-                  <div>
-                    <label
-                      htmlFor="sim-rev-input"
-                      className="block text-[11px] text-slate-500 mb-1"
-                    >
-                      Ingresos ($ USD)
-                    </label>
-                    <input
-                      id="sim-rev-input"
-                      name="simRevenue"
-                      type="number"
-                      min={100}
-                      step={1}
-                      value={simRevenue}
-                      onChange={(e) => setSimRevenue(e.target.value)}
-                      className="w-full px-3 py-1.5 text-xs font-mono rounded-lg border border-slate-200"
-                    />
-                  </div>
-                  <div>
-                    <label
-                      htmlFor="sim-units-input"
-                      className="block text-[11px] text-slate-500 mb-1"
-                    >
-                      Unidades Vendidas
-                    </label>
-                    <input
-                      id="sim-units-input"
-                      type="number"
-                      min={1}
-                      step={1}
-                      value={simUnits}
-                      onChange={(e) => setSimUnits(e.target.value)}
-                      className="w-full px-3 py-1.5 text-xs font-mono rounded-lg border border-slate-200"
-                    />
-                  </div>
+              {/* Real Top Selling Products from order_items */}
+              <div className="p-4 rounded-2xl bg-white border border-slate-200 space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                    <Award className="w-4 h-4 text-emerald-600" />
+                    <span>Top Productos Vendidos (order_items)</span>
+                  </h3>
+                  <span className="text-[10px] font-mono text-slate-500">
+                    {topSellingProducts.length} SKU
+                  </span>
                 </div>
-                <button
-                  type="submit"
-                  className="w-full py-2 px-3 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-xl transition-colors"
-                >
-                  + Añadir Semana {salesHistory.length + 1} al Modelo Lineal
-                </button>
-              </form>
+
+                {topSellingProducts.length === 0 ? (
+                  <p className="text-xs text-slate-500 py-2">
+                    Aún no hay productos vendidos registrados en <span className="font-mono">order_items</span>.
+                  </p>
+                ) : (
+                  <div className="space-y-2.5">
+                    {topSellingProducts.slice(0, 5).map((item, idx) => {
+                      const maxRev = topSellingProducts[0]?.revenue || 1;
+                      const pct = Math.max(8, Math.round((item.revenue / maxRev) * 100));
+                      return (
+                        <div key={`${item.productId}-${idx}`} className="space-y-1">
+                          <div className="flex items-center justify-between gap-2 text-xs">
+                            <span className="font-semibold text-slate-800 truncate">
+                              {idx + 1}. {item.productName}
+                            </span>
+                            <span className="font-mono font-bold text-emerald-700 shrink-0 tabular-nums">
+                              ${item.revenue.toFixed(2)}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between gap-2 text-[10px] text-slate-500 font-mono">
+                            <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-emerald-500 rounded-full"
+                                style={{ width: `${pct}%` }}
+                              />
+                            </div>
+                            <span className="shrink-0">
+                              {item.unitsSold} {item.unitsSold === 1 ? 'ud' : 'uds'} · {item.ordersCount}{' '}
+                              {item.ordersCount === 1 ? 'pedido' : 'pedidos'}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </section>
@@ -1967,56 +2075,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 className="px-4 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-xl"
               >
                 Sí, Eliminar Producto
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Safe Reset Sales History Confirmation Modal */}
-      {confirmResetSales && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="reset-sales-title"
-          onClick={() => setConfirmResetSales(false)}
-        >
-          <div
-            className="bg-white rounded-2xl border border-slate-200 shadow-xl max-w-md w-full p-6 space-y-4"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-start gap-3">
-              <div className="w-10 h-10 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 flex items-center justify-center shrink-0">
-                <RotateCcw className="w-5 h-5" />
-              </div>
-              <div>
-                <h3 id="reset-sales-title" className="text-base font-bold text-slate-900">
-                  ¿Restaurar serie histórica de ventas?
-                </h3>
-                <p className="text-xs text-slate-600 mt-1 leading-relaxed">
-                  El historial semanal volverá a las 10 semanas base de demostración en el panel y en Supabase.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => setConfirmResetSales(false)}
-                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl"
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  onResetSalesHistory();
-                  setConfirmResetSales(false);
-                }}
-                className="px-4 py-2 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-xl"
-              >
-                Restaurar Serie Base
               </button>
             </div>
           </div>

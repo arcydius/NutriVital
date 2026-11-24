@@ -90,9 +90,20 @@ export interface WellnessProjectionPoint {
   compositeVitality: number;
 }
 
+export type SalesAggregationPeriod = 'day' | 'week' | 'month' | 'order';
+
+export interface TopSellingProductSummary {
+  productId: string;
+  productName: string;
+  unitsSold: number;
+  revenue: number;
+  ordersCount: number;
+}
+
 export interface OrderReceipt {
   id: string;
   createdAt: string;
+  createdAtIso?: string;
   customerName: string;
   customerEmail: string;
   paymentMethod: string;

@@ -3,10 +3,13 @@ import {
   CartItem,
   CartSummary,
   LinearRegressionResult,
+  OrderReceipt,
   Product,
   ProductStatus,
   RegressionPoint,
   SaleRecord,
+  SalesAggregationPeriod,
+  TopSellingProductSummary,
   WellnessProjectionPoint,
 } from '../types/nutrivital';
 
@@ -284,4 +287,163 @@ export function authenticateAdmin(
   }
 
   return { ok: true, user: matchedUser };
+}
+
+function getOrderTimestampMs(order: OrderReceipt, fallbackIndex: number): number {
+  if (order.createdAtIso) {
+    const t = Date.parse(order.createdAtIso);
+    if (!Number.isNaN(t)) return t;
+  }
+  const t2 = Date.parse(order.createdAt);
+  if (!Number.isNaN(t2)) return t2;
+  return fallbackIndex;
+}
+
+function getMondayUtcKey(date: Date): { key: string; label: string } {
+  const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const day = d.getUTCDay(); // 0=Sun..6=Sat
+  const diffToMonday = day === 0 ? -6 : 1 - day;
+  d.setUTCDate(d.getUTCDate() + diffToMonday);
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const dayStr = String(d.getUTCDate()).padStart(2, '0');
+  return {
+    key: `${y}-${m}-${dayStr}`,
+    label: `Sem ${dayStr}/${m}`,
+  };
+}
+
+/**
+ * Agrupa pedidos reales (orders + order_items) en una serie cronológica real
+ * por día, semana, mes o por pedido individual para alimentar la regresión lineal OLS.
+ */
+export function aggregateOrdersToSalesSeries(
+  orders: OrderReceipt[],
+  period: SalesAggregationPeriod = 'day'
+): SaleRecord[] {
+  if (!orders || orders.length === 0) return [];
+
+  const sorted = orders
+    .map((order, idx) => ({ order, ts: getOrderTimestampMs(order, idx) }))
+    .sort((a, b) => a.ts - b.ts);
+
+  if (period === 'order') {
+    return sorted.map(({ order }, idx) => {
+      const units = order.items.reduce((sum, item) => sum + item.quantity, 0);
+      return {
+        week: idx + 1,
+        weekLabel: `#${idx + 1}`,
+        revenue: Number(order.total.toFixed(2)),
+        units,
+        ordersCount: 1,
+      };
+    });
+  }
+
+  const buckets = new Map<
+    string,
+    { label: string; revenue: number; units: number; ordersCount: number }
+  >();
+
+  const shortMonths = [
+    'ene',
+    'feb',
+    'mar',
+    'abr',
+    'may',
+    'jun',
+    'jul',
+    'ago',
+    'sep',
+    'oct',
+    'nov',
+    'dic',
+  ];
+
+  for (const { order, ts } of sorted) {
+    const date = new Date(ts);
+    const validDate = !Number.isNaN(date.getTime()) ? date : new Date();
+    const y = validDate.getFullYear();
+    const mIdx = validDate.getMonth();
+    const mStr = String(mIdx + 1).padStart(2, '0');
+    const dStr = String(validDate.getDate()).padStart(2, '0');
+
+    let key: string;
+    let label: string;
+
+    if (period === 'day') {
+      key = `${y}-${mStr}-${dStr}`;
+      label = `${dStr} ${shortMonths[mIdx]}`;
+    } else if (period === 'week') {
+      const mon = getMondayUtcKey(validDate);
+      key = mon.key;
+      label = mon.label;
+    } else {
+      key = `${y}-${mStr}`;
+      label = `${shortMonths[mIdx]} ${String(y).slice(-2)}`;
+    }
+
+    const orderUnits = order.items.reduce((sum, item) => sum + item.quantity, 0);
+    const prev = buckets.get(key);
+    if (prev) {
+      prev.revenue = Number((prev.revenue + order.total).toFixed(2));
+      prev.units += orderUnits;
+      prev.ordersCount += 1;
+    } else {
+      buckets.set(key, {
+        label,
+        revenue: Number(order.total.toFixed(2)),
+        units: orderUnits,
+        ordersCount: 1,
+      });
+    }
+  }
+
+  return Array.from(buckets.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([, b], idx) => ({
+      week: idx + 1,
+      weekLabel: b.label,
+      revenue: b.revenue,
+      units: b.units,
+      ordersCount: b.ordersCount,
+    }));
+}
+
+/**
+ * Calcula los productos más vendidos reales a partir de order_items en los pedidos registrados.
+ */
+export function calculateTopSellingProducts(
+  orders: OrderReceipt[]
+): TopSellingProductSummary[] {
+  const map = new Map<string, TopSellingProductSummary>();
+
+  for (const order of orders) {
+    const seenInOrder = new Set<string>();
+    for (const item of order.items) {
+      const key = item.productId || item.name;
+      const existing = map.get(key);
+      if (existing) {
+        existing.unitsSold += item.quantity;
+        existing.revenue = Number((existing.revenue + item.lineTotal).toFixed(2));
+        if (!seenInOrder.has(key)) {
+          existing.ordersCount += 1;
+          seenInOrder.add(key);
+        }
+      } else {
+        map.set(key, {
+          productId: item.productId || 'N/D',
+          productName: item.name,
+          unitsSold: item.quantity,
+          revenue: Number(item.lineTotal.toFixed(2)),
+          ordersCount: 1,
+        });
+        seenInOrder.add(key);
+      }
+    }
+  }
+
+  return Array.from(map.values()).sort(
+    (a, b) => b.revenue - a.revenue || b.unitsSold - a.unitsSold
+  );
 }

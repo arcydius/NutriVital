@@ -1,9 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  aggregateOrdersToSalesSeries,
   authenticateAdmin,
   calculateCartSummary,
   calculateOrdinaryLinearRegression,
+  calculateTopSellingProducts,
   computeProductStatus,
   deductInventoryAfterPurchase,
   generateWellnessProjection,
@@ -623,4 +625,84 @@ test('Admin product metric parser preserves explicit zero macros and computes st
   assert.equal(computeProductStatus(0), 'Agotado');
   assert.equal(computeProductStatus(8), 'Bajo Stock');
   assert.equal(computeProductStatus(25), 'Activo');
+});
+
+test('Real sales aggregation and top-selling products derive accurately from orders & order_items', () => {
+  const realOrders = [
+    {
+      id: 'NV-1001',
+      createdAt: '22 nov 2026',
+      createdAtIso: '2026-11-22T14:00:00.000Z',
+      customerName: 'Laura',
+      customerEmail: 'laura@test.com',
+      paymentMethod: 'NutriVital Pay',
+      items: [
+        { productId: 'NV-104', name: 'Omega-3 Vegano', quantity: 2, unitPrice: 48, lineTotal: 96 },
+      ],
+      subtotal: 96,
+      tax: 15.36,
+      shipping: 0,
+      total: 111.36,
+    },
+    {
+      id: 'NV-1002',
+      createdAt: '24 nov 2026',
+      createdAtIso: '2026-11-24T17:18:00.000Z',
+      customerName: 'Carlos',
+      customerEmail: 'carlos@test.com',
+      paymentMethod: 'NutriVital Pay',
+      items: [
+        { productId: 'NV-104', name: 'Omega-3 Vegano', quantity: 1, unitPrice: 48, lineTotal: 48 },
+        { productId: 'NV-101', name: 'Proteína Matcha', quantity: 1, unitPrice: 44.5, lineTotal: 44.5 },
+      ],
+      subtotal: 92.5,
+      tax: 14.8,
+      shipping: 0,
+      total: 107.3,
+    },
+    {
+      id: 'NV-1003',
+      createdAt: '24 nov 2026',
+      createdAtIso: '2026-11-24T18:18:00.000Z',
+      customerName: 'Arelenys',
+      customerEmail: 'arelenys@test.com',
+      paymentMethod: 'NutriVital Pay',
+      items: [
+        { productId: 'NV-101', name: 'Proteína Matcha', quantity: 1, unitPrice: 44.5, lineTotal: 44.5 },
+      ],
+      subtotal: 44.5,
+      tax: 7.12,
+      shipping: 6.5,
+      total: 58.12,
+    },
+  ];
+
+  // Grouped by day: 2 distinct days (22 nov and 24 nov)
+  const byDay = aggregateOrdersToSalesSeries(realOrders, 'day');
+  assert.equal(byDay.length, 2);
+  assert.equal(byDay[0].revenue, 111.36);
+  assert.equal(byDay[0].units, 2);
+  assert.equal(byDay[1].revenue, 165.42);
+  assert.equal(byDay[1].units, 3);
+  assert.equal(byDay[1].ordersCount, 2);
+
+  // Real OLS over the 2 days has positive slope (+54.06 $/day)
+  const ols = calculateOrdinaryLinearRegression(byDay, 'revenue', 2);
+  assert.equal(ols.slope, 54.06);
+  assert.equal(ols.rSquared, 1);
+
+  // Grouped by individual order: 3 points
+  const byOrder = aggregateOrdersToSalesSeries(realOrders, 'order');
+  assert.equal(byOrder.length, 3);
+  assert.equal(byOrder[0].weekLabel, '#1');
+  assert.equal(byOrder[2].weekLabel, '#3');
+
+  // Top selling products from order_items
+  const top = calculateTopSellingProducts(realOrders);
+  assert.equal(top.length, 2);
+  assert.equal(top[0].productId, 'NV-104');
+  assert.equal(top[0].unitsSold, 3);
+  assert.equal(top[0].revenue, 144);
+  assert.equal(top[1].productId, 'NV-101');
+  assert.equal(top[1].unitsSold, 2);
 });
