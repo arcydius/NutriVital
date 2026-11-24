@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Sliders, Sparkles, Activity, Scale, Zap, AlertCircle } from 'lucide-react';
+import { Sliders, Sparkles, Activity, Scale, Zap, AlertCircle, FileText, ArrowUpRight, LogIn } from 'lucide-react';
 import { ClientUser, MedicalReportRecord } from '../types/nutrivital';
 import { AVAILABLE_SUPPLEMENTS } from '../data/seedData';
 import {
@@ -15,31 +15,8 @@ interface WellnessSimulatorProps {
   activeSupplementIds?: string[];
   simulatedCalories?: number;
   medicalReports?: MedicalReportRecord[];
+  onRequireLogin?: () => void;
 }
-
-const DEFAULT_GUEST_BIOMETRICS: ClientUser['biometrics'] = {
-  systolicBP: 124,
-  diastolicBP: 82,
-  heartRate: 74,
-  bodyWeight: 67,
-  height: 170,
-  waistCircumference: 80,
-  bodyMass: 23.2,
-  dailyCalories: 2150,
-  fattyLiverGrade: 0,
-  lastUpdated: '2026-11-19',
-};
-
-const DEFAULT_GUEST_GOALS: ClientUser['goals'] = {
-  targetSystolicBP: 118,
-  targetDiastolicBP: 78,
-  targetHeartRate: 68,
-  targetWeight: 63,
-  targetBodyMass: 21.8,
-  targetCalories: 1950,
-  timelineWeeks: 12,
-  source: 'baseline_default',
-};
 
 interface AdherencePoint {
   week: number;
@@ -55,26 +32,36 @@ interface AdherencePoint {
 
 export const WellnessSimulator: React.FC<WellnessSimulatorProps> = ({
   currentClient = null,
-  activeSupplementIds = ['SUP-OMEGA3', 'SUP-MAGNESIO'],
+  activeSupplementIds = [],
   simulatedCalories,
   medicalReports = [],
+  onRequireLogin,
 }) => {
-  const biometrics = currentClient?.biometrics ?? DEFAULT_GUEST_BIOMETRICS;
-  const goals = currentClient?.goals ?? DEFAULT_GUEST_GOALS;
+  const hasClinicalData = Boolean(
+    currentClient &&
+      currentClient.biometrics &&
+      currentClient.goals &&
+      medicalReports.length > 0
+  );
+  const biometrics = hasClinicalData ? currentClient!.biometrics! : null;
+  const goals = hasClinicalData ? currentClient!.goals! : null;
   const clientAge = calculateAge(currentClient?.dateOfBirth);
-  const effectiveCalories = simulatedCalories ?? biometrics.dailyCalories;
+  const effectiveCalories =
+    simulatedCalories && simulatedCalories > 0
+      ? simulatedCalories
+      : biometrics?.dailyCalories ?? 0;
 
   const [weeks, setWeeks] = useState<number>(() =>
-    Math.max(4, Math.min(12, goals.timelineWeeks || 8))
+    Math.max(4, Math.min(12, goals?.timelineWeeks || 8))
   );
   const [adherence, setAdherence] = useState<number>(85);
 
   // Sincroniza horizonte inicial cuando cambian las metas sugeridas por IA del usuario
   useEffect(() => {
-    if (goals.timelineWeeks) {
+    if (goals?.timelineWeeks) {
       setWeeks(Math.max(4, Math.min(12, goals.timelineWeeks)));
     }
-  }, [goals.timelineWeeks]);
+  }, [goals?.timelineWeeks]);
 
   const selectedSupplements = useMemo(() => {
     const idSet = new Set(activeSupplementIds);
@@ -82,6 +69,8 @@ export const WellnessSimulator: React.FC<WellnessSimulatorProps> = ({
   }, [activeSupplementIds]);
 
   const projection = useMemo<AdherencePoint[]>(() => {
+    if (!biometrics || !goals) return [];
+
     const fullImpact = calculateProjectedImpact(
       biometrics,
       goals,
@@ -94,7 +83,9 @@ export const WellnessSimulator: React.FC<WellnessSimulatorProps> = ({
 
     const adherenceFactor = adherence / 100;
     const heightCm = biometrics.height || 170;
-    const waistCm = biometrics.waistCircumference || 80;
+    const hasWaist =
+      typeof biometrics.waistCircumference === 'number' && biometrics.waistCircumference > 0;
+    const waistCm = hasWaist ? biometrics.waistCircumference! : 0;
     const maxAdaptation = 1 - Math.exp(-2.2);
     const supplementBonus = selectedSupplements.reduce(
       (sum, s) => sum + (s.vitalityScoreBonus ?? 0) * 0.55,
@@ -121,8 +112,8 @@ export const WellnessSimulator: React.FC<WellnessSimulatorProps> = ({
         Math.max(40, biometrics.bodyWeight + fullImpact.weightDelta * weightFactor).toFixed(1)
       );
       const curBmi = calculateBMI(curWeight, heightCm) || biometrics.bodyMass;
-      const curWaist = Math.max(40, waistCm + fullImpact.waistDelta * weightFactor);
-      const curWhtr = calculateWHtR(curWaist, heightCm);
+      const curWaist = hasWaist ? Math.max(40, waistCm + fullImpact.waistDelta * weightFactor) : 0;
+      const curWhtr = hasWaist ? calculateWHtR(curWaist, heightCm) : undefined;
 
       const vitalityScore = calculateOverallVitalityScore(
         curSys,
@@ -173,6 +164,59 @@ export const WellnessSimulator: React.FC<WellnessSimulatorProps> = ({
 
     return points;
   }, [biometrics, goals, selectedSupplements, effectiveCalories, weeks, adherence, medicalReports, clientAge]);
+
+  if (!hasClinicalData || !biometrics || !goals) {
+    return (
+      <section
+        id="progreso"
+        aria-labelledby="wellness-sim-heading"
+        className="py-16 bg-[#F0FDF4]/70 border-y border-emerald-100"
+      >
+        <div className="max-w-7xl mx-auto px-6">
+          <div className="bg-white rounded-3xl border border-emerald-200/80 shadow-xs p-6 sm:p-8 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+            <div className="space-y-2.5 max-w-2xl">
+              <span className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-800 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-200">
+                <FileText className="w-3.5 h-3.5 text-emerald-700" />
+                <span>Simulador de Adherencia · En Espera de Informe Médico</span>
+              </span>
+              <h2
+                id="wellness-sim-heading"
+                className="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight"
+              >
+                Tu Progreso Semanal se activará con tus datos reales
+              </h2>
+              <p className="text-sm text-slate-600 leading-relaxed">
+                No mostramos proyecciones genéricas ni pesos o presiones predefinidas. En cuanto subas tu informe médico completo en <strong>Mi Salud & Biometría</strong>, aquí podrás simular semana a semana cómo tu nivel de constancia te acerca a tus metas orientativas calculadas por IA.
+              </p>
+            </div>
+
+            {currentClient ? (
+              <a
+                href="#mi-salud"
+                onClick={(e) => {
+                  e.preventDefault();
+                  document.getElementById('mi-salud')?.scrollIntoView({ behavior: 'smooth' });
+                }}
+                className="px-5 py-3 rounded-2xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs sm:text-sm font-bold transition-colors inline-flex items-center justify-center gap-2 shrink-0 shadow-sm"
+              >
+                <span>Ir a Subir Mi Informe Médico</span>
+                <ArrowUpRight className="w-4 h-4 text-emerald-200" />
+              </a>
+            ) : (
+              <button
+                type="button"
+                onClick={onRequireLogin}
+                className="px-5 py-3 rounded-2xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs sm:text-sm font-bold transition-colors inline-flex items-center justify-center gap-2 shrink-0 shadow-sm"
+              >
+                <LogIn className="w-4 h-4 text-emerald-200" />
+                <span>Iniciar Sesión para Comenzar</span>
+              </button>
+            )}
+          </div>
+        </div>
+      </section>
+    );
+  }
 
   const finalPoint = projection[projection.length - 1] ?? {
     week: 1,

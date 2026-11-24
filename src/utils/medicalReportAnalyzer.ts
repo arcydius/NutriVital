@@ -16,19 +16,6 @@ function fileToBase64(file: File): Promise<string> {
 }
 
 /**
- * Genera un hash pseudo-aleatorio determinista a partir del nombre y tamaño del archivo
- * para asegurar reproducibilidad clínica en modo offline o demo.
- */
-function computeFileHash(fileName: string, fileSize: number): number {
-  let hash = fileSize;
-  for (let i = 0; i < fileName.length; i++) {
-    hash = (hash << 5) - hash + fileName.charCodeAt(i);
-    hash |= 0;
-  }
-  return Math.abs(hash);
-}
-
-/**
  * Extrae texto sin formato de streams dentro de archivos PDF en el navegador o Node.js.
  */
 async function extractTextFromPdf(file: File): Promise<string> {
@@ -142,20 +129,37 @@ export function parseTextLabMarkers(rawText: string, fileName: string): MedicalR
 
   // Extracción de presión arterial y frecuencia cardíaca si figuran en el informe
   const bpMatch = lower.match(
-    /(?:presi[oó]n\s*arterial|tensi[oó]n\s*arterial|\bpa\b|\bbp\b)[^\d]{0,20}(\d{2,3})\s*[\/|\\]\s*(\d{2,3})/
+    /(?:presi[oó]n\s*arterial|tensi[oó]n\s*arterial|\bpa\b|\bta\b|\bbp\b)[^\d]{0,25}(\d{2,3})\s*[\/|\\]\s*(\d{2,3})/
   );
-  const detectedSystolicBP = bpMatch ? Number(bpMatch[1]) : undefined;
-  const detectedDiastolicBP = bpMatch ? Number(bpMatch[2]) : undefined;
+  const separateSys = extractNum(/presi[oó]n\s*sist[oó]lica|\bsist[oó]lica\b|systolic/, '\\d{2,3}');
+  const separateDia = extractNum(/presi[oó]n\s*diast[oó]lica|\bdiast[oó]lica\b|diastolic/, '\\d{2,3}');
+  const detectedSystolicBP = bpMatch ? Number(bpMatch[1]) : separateSys;
+  const detectedDiastolicBP = bpMatch ? Number(bpMatch[2]) : separateDia;
 
   const detectedHeartRate = extractNum(
-    /frecuencia\s*card[ií]aca|ritmo\s*card[ií]aco|pulso|\bfc\b|heart\s*rate|\bhr\b/,
+    /frecuencia\s*card[ií]aca|ritmo\s*card[ií]aco|pulsaciones|pulso|latidos(?:\s*por\s*minuto)?|\bfc\b|heart\s*rate|\bhr\b/,
     '\\d{2,3}'
   );
 
-  // Extracción de peso, estatura, cintura y grado de esteatosis hepática si figuran en el informe
-  const detectedWeight = extractNum(/peso(?:\s*corporal)?|weight/, '\\d{2,3}');
-  const detectedHeight = extractNum(/estatura|altura|talla|height/, '\\d{3}');
-  const detectedWaist = extractNum(/cintura|per[ií]metro\s*abdominal|waist/, '\\d{2,3}');
+  // Extracción de peso, estatura (cm o metros), cintura, calorías y grado de esteatosis hepática si figuran
+  const detectedWeight = extractNum(/peso(?:\s*corporal|\s*actual)?|weight/, '\\d{2,3}');
+  const rawHeight = extractNum(/estatura|altura|talla|height/, '\\d{1,3}');
+  const detectedHeight =
+    rawHeight !== undefined
+      ? rawHeight >= 1.2 && rawHeight <= 2.4
+        ? Math.round(rawHeight * 100)
+        : rawHeight >= 100 && rawHeight <= 240
+          ? Math.round(rawHeight)
+          : undefined
+      : undefined;
+  const detectedWaist = extractNum(
+    /cintura|per[ií]metro\s*abdominal|circunferencia\s*(?:de\s*)?cintura|waist/,
+    '\\d{2,3}'
+  );
+  const detectedDailyCalories = extractNum(
+    /calor[ií]as(?:\s*diarias|\s*habituales|\s*actuales)?|ingesta\s*cal[oó]rica|gasto\s*cal[oó]rico/,
+    '\\d{3,4}'
+  );
 
   let fattyLiverGrade: FattyLiverGrade | undefined = undefined;
   const liverNumMatch = lower.match(/(?:h[ií]gado\s*graso|esteatosis(?:\s*hep[aá]tica)?)[^\n\r]{0,25}(?:grado|g)\s*([0-3])/i);
@@ -167,6 +171,8 @@ export function parseTextLabMarkers(rawText: string, fileName: string): MedicalR
     fattyLiverGrade = 2;
   } else if (/(?:h[ií]gado\s*graso|esteatosis)[^\n\r]{0,25}leve/i.test(lower)) {
     fattyLiverGrade = 1;
+  } else if (/(?:sin\s*esteatosis|esteatosis\s*ausente|h[ií]gado\s*(?:normal|sano))/i.test(lower)) {
+    fattyLiverGrade = 0;
   }
 
   // Extracción de fecha del informe si figura
@@ -188,10 +194,12 @@ export function parseTextLabMarkers(rawText: string, fileName: string): MedicalR
     ferritin,
     fattyLiverGrade,
     detectedSystolicBP,
+    detectedDiastolicBP,
     detectedHeartRate,
     detectedWeight,
     detectedHeight,
     detectedWaist,
+    detectedDailyCalories,
   ].some((v) => v !== undefined);
 
   if (!hasAny) return null;
@@ -272,15 +280,13 @@ export function parseTextLabMarkers(rawText: string, fileName: string): MedicalR
     detectedWeight,
     detectedHeight,
     detectedWaist,
+    detectedDailyCalories,
   };
 }
 
 /**
- * Analiza un archivo médico (PDF, imagen JPG/PNG/WEBP o texto TXT/CSV).
- * 1. Si es TXT/CSV, lo procesa directamente con el motor de reglas biomédicas.
- * 2. Si es PDF con texto incrustado, extrae y analiza el flujo de caracteres.
- * 3. Si hay endpoint de IA o API Key configurada, ejecuta el análisis multimodal.
- * 4. Si el entorno es local/offline, ejecuta un extractor clínico inteligente determinista.
+ * Analiza un archivo médico (PDF, imagen JPG/PNG/WEBP o texto TXT/CSV) extrayendo
+ * únicamente datos reales presentes en el documento (nunca inventa métricas por defecto).
  */
 export async function analyzeMedicalReportFile(file: File): Promise<MedicalReportRecord> {
   if (file.size > MAX_FILE_SIZE_BYTES) {
@@ -303,29 +309,41 @@ export async function analyzeMedicalReportFile(file: File): Promise<MedicalRepor
     throw new Error('Formato no compatible. Sube un PDF, imagen (JPG/PNG/WEBP) o TXT.');
   }
 
-  // 1. Procesamiento directo si es archivo de texto plano
-  if (file.type === 'text/plain' || file.name.endsWith('.txt') || file.name.endsWith('.csv')) {
+  const isPlainText =
+    file.type === 'text/plain' ||
+    file.type === 'text/csv' ||
+    file.name.toLowerCase().endsWith('.txt') ||
+    file.name.toLowerCase().endsWith('.csv');
+
+  // 1. Procesamiento directo determinista si es archivo de texto plano estructurado
+  if (isPlainText) {
     const text = await file.text();
     const parsed = parseTextLabMarkers(text, file.name);
-    if (parsed) return parsed;
-  }
-
-  // 2. Si es PDF, intentar extracción de texto nativa del documento
-  if (file.type === 'application/pdf' || file.name.endsWith('.pdf')) {
-    const extractedText = await extractTextFromPdf(file);
-    if (extractedText && extractedText.length > 20) {
-      const parsed = parseTextLabMarkers(extractedText, file.name);
-      if (parsed) return parsed;
+    if (
+      parsed &&
+      parsed.detectedSystolicBP !== undefined &&
+      parsed.detectedDiastolicBP !== undefined &&
+      parsed.detectedHeartRate !== undefined &&
+      parsed.detectedWeight !== undefined &&
+      parsed.detectedHeight !== undefined
+    ) {
+      return parsed;
+    }
+    // Si es un TXT parcial (p. ej. seguimiento solo de laboratorio o pruebas unitarias), conservarlo como respaldo si Gemini no responde
+    if (parsed && file.size < 4096) {
+      // En entorno sin backend HTTP (ej. test runner), devolver el resultado real extraído del texto
+      if (typeof window === 'undefined') {
+        return parsed;
+      }
     }
   }
 
-  // 3. Intentar llamada al endpoint backend seguro o Gemini API si el archivo es real (no muestra demo vacía)
-  const isSyntheticDemoFile = file.size < 32;
+  // 2. Análisis multimodal real con Gemini API (/api/analyze-medical-report) para PDF, imágenes y textos narrativos
   const apiEndpoint =
     (typeof import.meta !== 'undefined' && import.meta.env?.VITE_MEDICAL_AI_ENDPOINT) ||
     '/api/analyze-medical-report';
 
-  if (!isSyntheticDemoFile) {
+  if (typeof window !== 'undefined' && file.size > 0) {
     try {
       const base64Data = await fileToBase64(file);
       const response = await fetch(apiEndpoint, {
@@ -333,20 +351,28 @@ export async function analyzeMedicalReportFile(file: File): Promise<MedicalRepor
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           fileName: file.name,
-          mimeType: file.type || 'application/pdf',
+          mimeType: file.type || (isPlainText ? 'text/plain' : 'application/pdf'),
           base64Data,
         }),
       });
 
       if (response.ok) {
         const data = await response.json();
+        const rawH = typeof data.detectedHeight === 'number' ? data.detectedHeight : undefined;
+        const normalizedHeight =
+          rawH !== undefined
+            ? rawH >= 1.2 && rawH <= 2.4
+              ? Math.round(rawH * 100)
+              : rawH
+            : undefined;
+
         return {
           id: `REP-${Date.now()}`,
           fileName: file.name,
           reportType: data.reportType || 'Analítica Sanguínea',
           reportDate: data.reportDate || new Date().toISOString().slice(0, 10),
           uploadedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          aiClinicalSummary: data.aiClinicalSummary,
+          aiClinicalSummary: data.aiClinicalSummary || 'Análisis clínico procesado por IA.',
           markers: data.markers || {},
           flaggedFindings: data.flaggedFindings || [],
           contraindications: data.contraindications || [],
@@ -354,8 +380,9 @@ export async function analyzeMedicalReportFile(file: File): Promise<MedicalRepor
           detectedDiastolicBP: data.detectedDiastolicBP,
           detectedHeartRate: data.detectedHeartRate,
           detectedWeight: data.detectedWeight,
-          detectedHeight: data.detectedHeight,
+          detectedHeight: normalizedHeight,
           detectedWaist: data.detectedWaist,
+          detectedDailyCalories: data.detectedDailyCalories,
           suggestedGoals: data.suggestedGoals
             ? {
                 ...data.suggestedGoals,
@@ -365,139 +392,26 @@ export async function analyzeMedicalReportFile(file: File): Promise<MedicalRepor
         };
       }
     } catch {
-      // Si no hay backend activo en modo local/demo, continúa con el motor inteligente
+      // Si el endpoint IA no está disponible localmente, intentamos extracción local de texto real abajo
     }
   }
 
-  // 4. Extractor clínico inteligente local (simulación multimodal determinista)
-  await new Promise((resolve) => setTimeout(resolve, 800));
-
-  const lowerName = file.name.toLowerCase();
-  const hash = computeFileHash(file.name, file.size);
-
-  if (
-    lowerName.includes('renal') ||
-    lowerName.includes('potasio') ||
-    lowerName.includes('rinon') ||
-    lowerName.includes('kidney') ||
-    lowerName.includes('creatinina')
-  ) {
-    return {
-      id: `REP-${Date.now()}`,
-      fileName: file.name,
-      reportType: 'Chequeo Cardiometabólico',
-      reportDate: new Date().toISOString().slice(0, 10),
-      uploadedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      aiClinicalSummary:
-        'Perfil con potasio sérico en límite superior (5.2 mEq/L) y creatinina de 1.35 mg/dL. Se activa bloqueo preventivo de electrolitos ricos en potasio.',
-      markers: {
-        creatinine: 1.35,
-        potassium: 5.2,
-        fastingGlucose: 98,
-        ldlCholesterol: 118,
-      },
-      flaggedFindings: [
-        'Potasio sérico en límite superior (5.2 mEq/L · Ref 3.5-5.0)',
-        'Creatinina sérica levemente elevada (1.35 mg/dL · Ref 0.7-1.2)',
-      ],
-      contraindications: ['Evitar suplementos concentrados de potasio sin supervisión nefrológica'],
-    };
+  // 3. Respaldo de extracción real de texto (sin inventar cifras) para TXT o PDF con texto incrustado
+  if (isPlainText) {
+    const text = await file.text();
+    const parsed = parseTextLabMarkers(text, file.name);
+    if (parsed) return parsed;
   }
 
-  if (
-    lowerName.includes('lipid') ||
-    lowerName.includes('colesterol') ||
-    lowerName.includes('triglicerid') ||
-    lowerName.includes('grasa')
-  ) {
-    return {
-      id: `REP-${Date.now()}`,
-      fileName: file.name,
-      reportType: 'Perfil Lipídico',
-      reportDate: new Date().toISOString().slice(0, 10),
-      uploadedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      aiClinicalSummary:
-        'La IA identificó triglicéridos elevados (192 mg/dL), colesterol LDL en 142 mg/dL y glucosa basal en 105 mg/dL. Se prioriza suplementación con Omega-3 EPA/DHA y optimización calórica.',
-      markers: {
-        fastingGlucose: 105,
-        hba1c: 5.8,
-        ldlCholesterol: 142,
-        hdlCholesterol: 41,
-        triglycerides: 192,
-        vitaminD: 23,
-        hsCRP: 2.4,
-      },
-      flaggedFindings: [
-        'Triglicéridos elevados (192 mg/dL · Ref <150)',
-        'Colesterol LDL elevado (142 mg/dL · Ref <100)',
-        'Vitamina D insuficiente (23 ng/mL · Ref 30-60)',
-        'Glucosa basal limítrofe (105 mg/dL · Ref <100)',
-      ],
-      contraindications: [],
-    };
+  if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+    const extractedText = await extractTextFromPdf(file);
+    if (extractedText && extractedText.length > 15) {
+      const parsed = parseTextLabMarkers(extractedText, file.name);
+      if (parsed) return parsed;
+    }
   }
 
-  if (
-    lowerName.includes('glucosa') ||
-    lowerName.includes('glicemia') ||
-    lowerName.includes('diabetes') ||
-    lowerName.includes('azucar') ||
-    lowerName.includes('hba1c')
-  ) {
-    return {
-      id: `REP-${Date.now()}`,
-      fileName: file.name,
-      reportType: 'Analítica Sanguínea',
-      reportDate: new Date().toISOString().slice(0, 10),
-      uploadedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      aiClinicalSummary:
-        'Se detectó glucosa basal en 115 mg/dL y HbA1c en 6.0%. La IA sugiere ajuste calórico (-200 kcal/día) y reemplazo de carbohidratos simples por proteína bio-activa con matcha.',
-      markers: {
-        fastingGlucose: 115,
-        hba1c: 6.0,
-        triglycerides: 168,
-        ldlCholesterol: 125,
-      },
-      flaggedFindings: [
-        'Glucosa en ayunas elevada (115 mg/dL · Ref <100)',
-        'Hemoglobina Glicosilada (HbA1c: 6.0% · Ref <5.7%)',
-        'Triglicéridos limítrofes (168 mg/dL)',
-      ],
-      contraindications: [],
-    };
-  }
-
-  // Para archivos de imagen o documentos médicos generales, generar panel realista calibrado
-  const trigValue = 150 + (hash % 65); // 150 - 214 mg/dL
-  const ldlValue = 120 + (hash % 38); // 120 - 157 mg/dL
-  const gluValue = 95 + (hash % 22); // 95 - 116 mg/dL
-  const vitDValue = 18 + (hash % 16); // 18 - 33 ng/mL
-
-  const findings: string[] = [];
-  if (trigValue >= 150) findings.push(`Triglicéridos elevados (${trigValue} mg/dL · Ref <150)`);
-  if (ldlValue >= 130) findings.push(`Colesterol LDL elevado (${ldlValue} mg/dL · Ref <100)`);
-  if (gluValue >= 100) findings.push(`Glucosa basal limítrofe (${gluValue} mg/dL)`);
-  if (vitDValue < 30) findings.push(`Vitamina D insuficiente (${vitDValue} ng/mL · Ref 30-60)`);
-
-  return {
-    id: `REP-${Date.now()}`,
-    fileName: file.name,
-    reportType:
-      trigValue > 175 ? 'Perfil Lipídico' : vitDValue < 25 ? 'Panel Hormonal & Micronutrientes' : 'Analítica Sanguínea',
-    reportDate: new Date().toISOString().slice(0, 10),
-    uploadedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    aiClinicalSummary: `Extracción completada con éxito. Se detectaron ${findings.length} biomarcadores clave (${findings.slice(0, 2).join(' y ')}). Tus curvas predictivas han sido calibradas con estos datos.`,
-    markers: {
-      fastingGlucose: gluValue,
-      ldlCholesterol: ldlValue,
-      hdlCholesterol: 45,
-      triglycerides: trigValue,
-      vitaminD: vitDValue,
-      hsCRP: 1.8,
-      potassium: 4.4,
-      creatinine: 1.0,
-    },
-    flaggedFindings: findings,
-    contraindications: [],
-  };
+  throw new Error(
+    'No se pudieron detectar datos médicos legibles en el archivo. Sube un informe médico real (PDF, imagen nítida o archivo TXT con tus signos vitales y analíticas).'
+  );
 }

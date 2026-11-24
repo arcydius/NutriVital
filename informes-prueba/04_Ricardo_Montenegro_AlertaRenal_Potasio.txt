@@ -1,0 +1,37 @@
+========================================================================
+UNIDAD DE MEDICINA DEPORTIVA & NEFROLOGIA PREVENTIVA - INFORME MEDICO
+========================================================================
+Paciente: Ricardo Montenegro
+ID Cliente: CLI-04
+Fecha de Nacimiento: 2003-05-24 | Género: Masculino
+Fecha de Emisión: 2026-11-23
+Tipo de Estudio: Chequeo Cardiometabólico y Función Renal
+
+--- 1. SIGNOS VITALES Y ANTROPOMETRIA ---
+TA: 138/88 mmHg
+Pulsaciones: 78 lpm
+Peso Corporal: 83.5 kg
+Estatura: 1.78 m
+Cintura: 93 cm
+
+--- 2. QUIMICA SANGUINEA Y FUNCION RENAL ---
+Glucosa en ayunas: 104 mg/dL (Ref: 70-99 mg/dL) [LIMITE]
+Hemoglobina Glicosilada (HbA1c): 5.6 % (Ref: <5.7 %)
+Colesterol LDL: 122 mg/dL (Ref: <100 mg/dL)
+Colesterol HDL: 46 mg/dL (Ref: >50 mg/dL)
+Triglicéridos: 165 mg/dL (Ref: <150 mg/dL) [LIMITE ALTO]
+Vitamina D (25-OH): 26 ng/mL (Ref: 30-60 ng/mL) [INSUFICIENTE]
+PCR-us: 1.7 mg/L (Ref: <1.0 mg/L)
+Creatinina: 1.42 mg/dL (Ref: 0.6-1.2 mg/dL) [VIGILANCIA RENAL]
+Potasio: 5.3 mEq/L (Ref: 3.5-5.1 mEq/L) [HIPERPOTASEMIA LEVE]
+Ferritina: 112 ng/mL (Ref: 30-300 ng/mL)
+
+--- 3. EVALUACION HEPATICA ---
+Ecografía abdominal: Esteatosis hepática leve (Hígado Graso Grado 1).
+
+--- OBSERVACIONES MEDICAS ---
+Hipertensión arterial leve en paciente joven (23 años), sobrepeso moderado
+(IMC 26.4), esteatosis hepática leve G1 y elevación de creatinina (1.42 mg/dL)
+junto a potasio sérico en 5.3 mEq/L. Contraindicado el uso de suplementos
+concentrados de potasio sin evaluación nefrológica previa.
+========================================================================

@@ -1,0 +1,37 @@
+========================================================================
+LABORATORIO DE BIENESTAR PREVENTIVO - INFORME DE ANALITICA
+========================================================================
+Paciente: Sofía Herrera
+ID Cliente: CLI-03
+Fecha de Nacimiento: 1995-08-03 | Género: Femenino
+Fecha de Emisión: 2026-11-22
+Tipo de Estudio: Panel Hormonal, Micronutrientes y Control Preventivo
+
+--- 1. SIGNOS VITALES Y ANTROPOMETRIA ---
+Presión Arterial: 112/72 mmHg
+Pulsaciones: 62 lpm
+Peso Corporal: 58.0 kg
+Estatura: 166 cm
+Cintura: 68 cm
+Calorías diarias: 1900 kcal
+
+--- 2. BIOMARCADORES DE LABORATORIO ---
+Glucosa en ayunas: 84 mg/dL (Ref: 70-99 mg/dL) [OPTIMA]
+Hemoglobina Glicosilada (HbA1c): 5.0 % (Ref: <5.7 %)
+Colesterol LDL: 82 mg/dL (Ref: <100 mg/dL) [OPTIMO]
+Colesterol HDL: 64 mg/dL (Ref: >50 mg/dL) [OPTIMO]
+Triglicéridos: 88 mg/dL (Ref: <150 mg/dL) [OPTIMO]
+Vitamina D (25-OH): 42 ng/mL (Ref: 30-60 ng/mL) [SUFICIENTE]
+PCR-us: 0.5 mg/L (Ref: <1.0 mg/L)
+Creatinina: 0.78 mg/dL (Ref: 0.6-1.2 mg/dL)
+Potasio: 4.1 mEq/L (Ref: 3.5-5.1 mEq/L)
+Ferritina: 18 ng/mL (Ref: 30-300 ng/mL) [BAJA / RESERVA LIMITE]
+
+--- 3. EVALUACION HEPATICA ---
+Hígado Graso: Grado 0 (Hígado normal sin esteatosis).
+
+--- OBSERVACIONES MEDICAS ---
+Perfil cardiovascular, lipídico y glucémico óptimo con normopeso.
+Único hallazgo relevante: ferritina sérica disminuida (18 ng/mL),
+compatible con fatiga leve o baja reserva férrica; valorar seguimiento.
+========================================================================

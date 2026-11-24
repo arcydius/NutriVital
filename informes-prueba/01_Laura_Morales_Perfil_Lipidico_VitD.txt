@@ -1,0 +1,37 @@
+========================================================================
+CENTRO CLINICO DIAGNOSTICO METABOLICO - INFORME DE LABORATORIO
+========================================================================
+Paciente: Laura Morales
+ID Cliente: CLI-01
+Fecha de Nacimiento: 1992-05-14 | Género: Femenino
+Fecha de Emisión: 2026-11-20
+Tipo de Estudio: Perfil Lipídico y Panel de Micronutrientes
+
+--- 1. SIGNOS VITALES Y ANTROPOMETRIA ---
+Presión Arterial: 128/84 mmHg
+Frecuencia Cardíaca: 76 lpm
+Peso Corporal: 74.5 kg
+Estatura: 170 cm
+Cintura: 84 cm
+Calorías diarias: 2250 kcal
+
+--- 2. QUIMICA SANGUINEA Y PERFIL LIPIDICO ---
+Glucosa en ayunas: 94 mg/dL (Ref: 70-99 mg/dL)
+Hemoglobina Glicosilada (HbA1c): 5.3 % (Ref: <5.7 %)
+Colesterol LDL: 144 mg/dL (Ref: <100 mg/dL) [ELEVADO]
+Colesterol HDL: 44 mg/dL (Ref: >50 mg/dL)
+Triglicéridos: 176 mg/dL (Ref: <150 mg/dL) [LIMITE ALTO]
+Vitamina D (25-OH): 22 ng/mL (Ref: 30-60 ng/mL) [INSUFICIENTE]
+Proteína C Reactiva ultrasensible (PCR-us): 2.3 mg/L (Ref: <1.0 mg/L)
+Creatinina: 0.85 mg/dL (Ref: 0.6-1.2 mg/dL)
+Potasio: 4.2 mEq/L (Ref: 3.5-5.1 mEq/L)
+Ferritina: 58 ng/mL (Ref: 30-300 ng/mL)
+
+--- 3. EVALUACION HEPATICA ---
+Ecografía abdominal: Sin esteatosis (Hígado Graso Grado 0).
+
+--- OBSERVACIONES MEDICAS ---
+Paciente presenta dislipidemia moderada (LDL y triglicéridos elevados),
+insuficiencia de Vitamina D, inflamación leve de bajo grado y tensión
+arterial en rango limítrofe. Función renal y hepática conservadas.
+========================================================================

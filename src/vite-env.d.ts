@@ -2,10 +2,11 @@
 
 interface ImportMetaEnv {
   readonly VITE_APP_TITLE?: string;
-  // Define additional env variables here if needed
+  readonly VITE_SUPABASE_URL?: string;
+  readonly VITE_SUPABASE_ANON_KEY?: string;
+  readonly VITE_MEDICAL_AI_ENDPOINT?: string;
 }
 
 interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
-

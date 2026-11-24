@@ -83,6 +83,15 @@ export function downloadMedicalReportTxt(
   if (report.detectedHeartRate) {
     txt += `• Ritmo Cardíaco Reportado:  ${report.detectedHeartRate} lpm\n`;
   }
+  if (report.detectedWeight) {
+    txt += `• Peso Corporal Reportado:   ${report.detectedWeight} kg\n`;
+  }
+  if (report.detectedHeight) {
+    txt += `• Estatura Reportada:        ${report.detectedHeight} cm\n`;
+  }
+  if (report.detectedWaist) {
+    txt += `• Cintura Reportada:         ${report.detectedWaist} cm\n`;
+  }
   txt += `\n`;
 
   if (report.flaggedFindings && report.flaggedFindings.length > 0) {
@@ -436,4 +445,50 @@ export function downloadMedicalReportPdf(
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
   }
+}
+
+/**
+ * Descarga una plantilla .TXT guía editable para que el usuario conozca
+ * el formato de un informe médico completo si desea crear uno de prueba con sus propios valores.
+ */
+export function downloadSampleMedicalReportTemplate(clientName?: string) {
+  const today = new Date().toISOString().slice(0, 10);
+  const template = [
+    '============================================================',
+    'INFORME MEDICO Y ANALITICA CLINICA (PLANTILLA EDITABLE)',
+    'Edita los siguientes valores con tus propios datos reales',
+    'antes de subir este archivo en NutriVital.',
+    '============================================================',
+    `Paciente: ${clientName || 'Tu Nombre'}`,
+    `Fecha: ${today}`,
+    '',
+    '--- SIGNOS VITALES Y ANTROPOMETRIA (OBLIGATORIOS) ---',
+    'Presión Arterial: 126/82 mmHg',
+    'Frecuencia Cardíaca: 74 lpm',
+    'Peso Corporal: 78.5 kg',
+    'Estatura: 175 cm',
+    'Cintura: 86 cm',
+    '',
+    '--- BIOMARCADORES DE LABORATORIO (OPCIONALES SEGUN TU EXAMEN) ---',
+    'Glucosa en ayunas: 98 mg/dL',
+    'Hemoglobina Glicosilada (HbA1c): 5.4 %',
+    'Triglicéridos: 162 mg/dL',
+    'Colesterol LDL: 124 mg/dL',
+    'Colesterol HDL: 48 mg/dL',
+    'Vitamina D (25-OH): 27 ng/mL',
+    'Creatinina: 0.95 mg/dL',
+    'Potasio: 4.3 mEq/L',
+    'Hígado Graso: Grado 0',
+    '',
+  ].join('\n');
+
+  const blob = new Blob([template], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'Plantilla_Informe_Medico_NutriVital.txt';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }

@@ -43,6 +43,8 @@ import {
   calculateAge,
   calculateAiSuggestedGoals,
   calculateBMI,
+  estimateMaintenanceCalories,
+  validateInitialReportRequirements,
 } from './utils/healthAnalytics';
 import { ProductIllustration } from './components/ProductIllustration';
 import { WellnessSimulator } from './components/WellnessSimulator';
@@ -116,14 +118,25 @@ export default function App() {
     }
   });
 
-  // Client & Biometrics Persistent State
+  // Client & Biometrics Persistent State (0 metrics until medical report is uploaded)
   const [clients, setClients] = useState<ClientUser[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.CLIENTS);
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
+          return parsed.map((c: ClientUser) => {
+            const hasReports = Array.isArray(c.medicalReports) && c.medicalReports.length > 0;
+            return hasReports
+              ? c
+              : {
+                  ...c,
+                  biometrics: null,
+                  goals: null,
+                  activeSupplements: [],
+                  medicalReports: [],
+                };
+          });
         }
       }
       return INITIAL_CLIENT_USERS;
@@ -150,12 +163,8 @@ export default function App() {
   }, [clients, clientSession]);
 
   const [isClientAuthModalOpen, setIsClientAuthModalOpen] = useState<boolean>(false);
-  const [activeSupplementIds, setActiveSupplementIds] = useState<string[]>(() => {
-    return INITIAL_CLIENT_USERS[0].activeSupplements || ['SUP-OMEGA3', 'SUP-MAGNESIO'];
-  });
-  const [simulatedCalories, setSimulatedCalories] = useState<number>(() => {
-    return INITIAL_CLIENT_USERS[0].biometrics.dailyCalories || 2200;
-  });
+  const [activeSupplementIds, setActiveSupplementIds] = useState<string[]>([]);
+  const [simulatedCalories, setSimulatedCalories] = useState<number>(0);
   const [selectedChartMetric, setSelectedChartMetric] = useState<ChartMetricView>('presion');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
 
@@ -170,16 +179,20 @@ export default function App() {
     }
   }, [currentClient]);
 
-  // Synchronize simulation defaults when currentClient changes
+  // Synchronize simulation defaults ONLY when currentClient has real biometrics from a report
   useEffect(() => {
-    if (currentClient) {
-      setActiveSupplementIds(currentClient.activeSupplements || ['SUP-OMEGA3', 'SUP-MAGNESIO']);
-      setSimulatedCalories(currentClient.biometrics.dailyCalories || 2200);
+    if (currentClient?.biometrics && (currentClient.medicalReports?.length ?? 0) > 0) {
+      setActiveSupplementIds(currentClient.activeSupplements || []);
+      setSimulatedCalories(currentClient.biometrics.dailyCalories);
     } else {
-      setActiveSupplementIds(['SUP-OMEGA3', 'SUP-MAGNESIO']);
-      setSimulatedCalories(2200);
+      setActiveSupplementIds([]);
+      setSimulatedCalories(0);
     }
-  }, [currentClient?.id]);
+  }, [
+    currentClient?.id,
+    currentClient?.biometrics?.dailyCalories,
+    currentClient?.medicalReports?.length,
+  ]);
 
   useEffect(() => {
     try {
@@ -213,6 +226,25 @@ export default function App() {
   const [authModalMode, setAuthModalMode] = useState<'login' | 'register'>('login');
   const [recentlyAddedId, setRecentlyAddedId] = useState<string | null>(null);
   const [recentOrders, setRecentOrders] = useState<OrderReceipt[]>([]);
+
+  // Hydrate initial state from Supabase if configured
+  useEffect(() => {
+    if (!nutriApi.isCloudEnabled()) return;
+    let mounted = true;
+
+    void nutriApi.fetchInitialState().then((cloud) => {
+      if (!mounted || !cloud) return;
+      if (cloud.products.length > 0) setProducts(cloud.products);
+      if (cloud.salesHistory.length > 0) setSalesHistory(cloud.salesHistory);
+      if (cloud.clients.length > 0) setClients(cloud.clients);
+      if (cloud.adminUsers.length > 0) setAdminUsers(cloud.adminUsers);
+      if (cloud.recentOrders.length > 0) setRecentOrders(cloud.recentOrders);
+    });
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   useEffect(() => {
     try {
@@ -326,28 +358,36 @@ export default function App() {
     const updatedProducts = deductInventoryAfterPurchase(products, cart);
     setProducts(updatedProducts);
 
+    const lastRec = salesHistory[salesHistory.length - 1];
+    const updatedSalesWeek: SaleRecord = lastRec
+      ? {
+          ...lastRec,
+          revenue: Number((lastRec.revenue + summary.total).toFixed(2)),
+          units: lastRec.units + summary.totalItems,
+          ordersCount: lastRec.ordersCount + 1,
+        }
+      : {
+          week: 1,
+          weekLabel: 'Sem 1',
+          revenue: Math.round(summary.total),
+          units: summary.totalItems,
+          ordersCount: 1,
+        };
+
     // Record transaction in latest week of salesHistory for Admin OLS regression
     setSalesHistory((prev) => {
       if (prev.length === 0) {
-        return [
-          {
-            week: 1,
-            weekLabel: 'Sem 1',
-            revenue: Math.round(summary.total),
-            units: summary.totalItems,
-            ordersCount: 1,
-          },
-        ];
+        return [updatedSalesWeek];
       }
       const lastIdx = prev.length - 1;
       return prev.map((rec, idx) =>
         idx === lastIdx
           ? {
-            ...rec,
-            revenue: Number((rec.revenue + summary.total).toFixed(2)),
-            units: rec.units + summary.totalItems,
-            ordersCount: rec.ordersCount + 1,
-          }
+              ...rec,
+              revenue: Number((rec.revenue + summary.total).toFixed(2)),
+              units: rec.units + summary.totalItems,
+              ordersCount: rec.ordersCount + 1,
+            }
           : rec
       );
     });
@@ -379,6 +419,12 @@ export default function App() {
 
     setRecentOrders((prev) => [receipt, ...prev]);
     setCart([]);
+    void nutriApi.recordOrderToDb(
+      receipt,
+      updatedProducts,
+      updatedSalesWeek,
+      currentClient?.id
+    );
     return receipt;
   };
 
@@ -415,6 +461,7 @@ export default function App() {
     setIsAuthModalOpen(false);
     setActiveView('admin');
     window.scrollTo({ top: 0, behavior: 'smooth' });
+    void nutriApi.updateAdminLastLogin(session.userId, formattedDate);
   };
 
   const handleRegisterAdmin = (newAdmin: AdminUser) => {
@@ -425,6 +472,7 @@ export default function App() {
       );
       return [...filtered, newAdmin];
     });
+    void nutriApi.registerAdminToDb(newAdmin);
   };
 
   const handleAdminLogout = () => {
@@ -443,9 +491,12 @@ export default function App() {
     setClientSession(session);
     setIsClientAuthModalOpen(false);
     const matched = clients.find((c) => c.id === session.userId);
-    if (matched) {
-      setActiveSupplementIds(matched.activeSupplements || ['SUP-OMEGA3', 'SUP-MAGNESIO']);
-      setSimulatedCalories(matched.biometrics.dailyCalories || 2200);
+    if (matched?.biometrics && (matched.medicalReports?.length ?? 0) > 0) {
+      setActiveSupplementIds(matched.activeSupplements || []);
+      setSimulatedCalories(matched.biometrics.dailyCalories);
+    } else {
+      setActiveSupplementIds([]);
+      setSimulatedCalories(0);
     }
   };
 
@@ -477,41 +528,54 @@ export default function App() {
             c.id === currentClient.id ? { ...c, activeSupplements: next } : c
           )
         );
+        void nutriApi.syncClientSupplements(currentClient.id, next);
       }
       return next;
     });
   };
 
-  // Medical Reports Handlers (AI Lab & Clinical Document Engine — requires authenticated client)
-  const handleUploadMedicalReport = (newReport: MedicalReportRecord) => {
+  // Medical Reports Handlers (AI Lab & Clinical Document Engine — requires authenticated client & complete vitals)
+  const handleUploadMedicalReport = (
+    newReport: MedicalReportRecord,
+    rawFile?: File
+  ): { ok: boolean; error?: string } => {
     if (!currentClient) {
       setIsClientAuthModalOpen(true);
-      return;
+      return { ok: false, error: 'Inicia sesión para subir tu informe médico.' };
     }
 
-    const nextWeight = newReport.detectedWeight ?? currentClient.biometrics.bodyWeight;
-    const nextHeight = newReport.detectedHeight ?? currentClient.biometrics.height ?? 170;
-    const nextWaist = newReport.detectedWaist ?? currentClient.biometrics.waistCircumference ?? 80;
-    const nextBmi = calculateBMI(nextWeight, nextHeight) || currentClient.biometrics.bodyMass;
+    const hasExistingBio = Boolean(
+      currentClient.biometrics && (currentClient.medicalReports?.length ?? 0) > 0
+    );
+    const validation = validateInitialReportRequirements(newReport, hasExistingBio);
+    if (!validation.valid) {
+      return {
+        ok: false,
+        error: `Para activar tus métricas e IA sin inventar datos, tu primer informe médico debe incluir tus signos vitales base. Faltó detectar: ${validation.missingFields.join(', ')}.`,
+      };
+    }
+
+    const prevBio = hasExistingBio ? currentClient.biometrics! : null;
+    const nextWeight = newReport.detectedWeight ?? prevBio!.bodyWeight;
+    const nextHeight = newReport.detectedHeight ?? prevBio!.height!;
+    const nextWaist = newReport.detectedWaist ?? prevBio?.waistCircumference;
+    const nextBmi = calculateBMI(nextWeight, nextHeight);
+    const clientAge = calculateAge(currentClient.dateOfBirth);
+    const nextCalories =
+      newReport.detectedDailyCalories ??
+      prevBio?.dailyCalories ??
+      estimateMaintenanceCalories(nextWeight, nextHeight, clientAge, currentClient.gender);
 
     const updatedBiometrics: ClientBiometrics = {
-      ...currentClient.biometrics,
-      ...(newReport.detectedSystolicBP
-        ? { systolicBP: newReport.detectedSystolicBP }
-        : {}),
-      ...(newReport.detectedDiastolicBP
-        ? { diastolicBP: newReport.detectedDiastolicBP }
-        : {}),
-      ...(newReport.detectedHeartRate
-        ? { heartRate: newReport.detectedHeartRate }
-        : {}),
+      systolicBP: newReport.detectedSystolicBP ?? prevBio!.systolicBP,
+      diastolicBP: newReport.detectedDiastolicBP ?? prevBio!.diastolicBP,
+      heartRate: newReport.detectedHeartRate ?? prevBio!.heartRate,
       bodyWeight: nextWeight,
       height: nextHeight,
       waistCircumference: nextWaist,
       bodyMass: nextBmi,
-      ...(newReport.markers.fattyLiverGrade !== undefined
-        ? { fattyLiverGrade: newReport.markers.fattyLiverGrade }
-        : {}),
+      dailyCalories: nextCalories,
+      fattyLiverGrade: newReport.markers.fattyLiverGrade ?? prevBio?.fattyLiverGrade ?? 0,
       lastUpdated: new Date().toISOString().replace('T', ' ').substring(0, 16),
     };
 
@@ -519,7 +583,7 @@ export default function App() {
     const aiSuggestedGoals = calculateAiSuggestedGoals(
       updatedBiometrics,
       newReport,
-      calculateAge(currentClient.dateOfBirth),
+      clientAge,
       currentClient.gender
     );
 
@@ -530,71 +594,120 @@ export default function App() {
 
     const updatedReports = [enrichedReport, ...(currentClient.medicalReports || [])];
 
+    setSimulatedCalories(updatedBiometrics.dailyCalories);
     setClients((prev) =>
       prev.map((c) =>
         c.id === currentClient.id
           ? {
-            ...c,
-            biometrics: updatedBiometrics,
-            goals: aiSuggestedGoals,
-            medicalReports: updatedReports,
-          }
+              ...c,
+              biometrics: updatedBiometrics,
+              goals: aiSuggestedGoals,
+              medicalReports: updatedReports,
+            }
           : c
       )
     );
-    void nutriApi.uploadReportToCloudDb(currentClient.id, enrichedReport);
+    void nutriApi.uploadReportToCloudDb(
+      currentClient.id,
+      enrichedReport,
+      updatedBiometrics,
+      aiSuggestedGoals,
+      rawFile
+    );
+    return { ok: true };
   };
 
   const handleDeleteMedicalReport = (reportId: string) => {
     if (!currentClient) return;
 
+    const targetReport = (currentClient.medicalReports || []).find(
+      (r) => r.id === reportId
+    );
     const updatedReports = (currentClient.medicalReports || []).filter(
       (r) => r.id !== reportId
     );
+
+    if (updatedReports.length === 0) {
+      setActiveSupplementIds([]);
+      setSimulatedCalories(0);
+      setClients((prev) =>
+        prev.map((c) =>
+          c.id === currentClient.id
+            ? {
+                ...c,
+                biometrics: null,
+                goals: null,
+                activeSupplements: [],
+                medicalReports: [],
+              }
+            : c
+        )
+      );
+      void nutriApi.deleteReportFromCloudDb(reportId, targetReport?.filePath);
+      void nutriApi.clearClientClinicalProfileFromDb(currentClient.id);
+      return;
+    }
+
+    const latestRemaining = updatedReports[0];
+    const recalculatedGoals = currentClient.biometrics
+      ? latestRemaining.suggestedGoals ??
+        calculateAiSuggestedGoals(
+          currentClient.biometrics,
+          latestRemaining,
+          calculateAge(currentClient.dateOfBirth),
+          currentClient.gender
+        )
+      : null;
+
     setClients((prev) =>
       prev.map((c) =>
         c.id === currentClient.id
-          ? { ...c, medicalReports: updatedReports }
+          ? {
+              ...c,
+              goals: recalculatedGoals,
+              medicalReports: updatedReports,
+            }
           : c
       )
     );
-    void nutriApi.deleteReportFromCloudDb(reportId);
+    void nutriApi.deleteReportFromCloudDb(reportId, targetReport?.filePath);
   };
 
   // Admin CRUD callbacks
   const handleAddProduct = (newProd: Product) => {
     setProducts((prev) => [newProd, ...prev]);
+    void nutriApi.saveProductToDb(newProd);
   };
 
   const handleUpdateProduct = (updatedProd: Product) => {
     setProducts((prev) =>
       prev.map((p) => (p.id === updatedProd.id ? updatedProd : p))
     );
+    void nutriApi.saveProductToDb(updatedProd);
   };
 
   const handleDeleteProduct = (productId: string) => {
     setProducts((prev) => prev.filter((p) => p.id !== productId));
     setCart((prev) => prev.filter((item) => item.product.id !== productId));
+    void nutriApi.deleteProductFromDb(productId);
   };
 
   const handleAddWeekSale = (revenue: number, units: number) => {
-    setSalesHistory((prev) => {
-      const nextWeek = prev.length + 1;
-      return [
-        ...prev,
-        {
-          week: nextWeek,
-          weekLabel: `Sem ${nextWeek}`,
-          revenue,
-          units,
-          ordersCount: Math.max(1, Math.round(units / 1.8)),
-        },
-      ];
-    });
+    const nextWeek = salesHistory.length + 1;
+    const newRecord: SaleRecord = {
+      week: nextWeek,
+      weekLabel: `Sem ${nextWeek}`,
+      revenue,
+      units,
+      ordersCount: Math.max(1, Math.round(units / 1.8)),
+    };
+    setSalesHistory((prev) => [...prev, newRecord]);
+    void nutriApi.upsertSalesWeekToDb(newRecord);
   };
 
   const handleResetSalesHistory = () => {
     setSalesHistory(INITIAL_SALES_HISTORY);
+    void nutriApi.resetSalesHistoryInDb(INITIAL_SALES_HISTORY);
   };
 
   return (
@@ -1164,6 +1277,7 @@ export default function App() {
               activeSupplementIds={activeSupplementIds}
               simulatedCalories={simulatedCalories}
               medicalReports={medicalReports}
+              onRequireLogin={handleOpenClientAuth}
             />
           </>
         )}

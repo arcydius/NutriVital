@@ -145,7 +145,11 @@ export const ClientAuthModal: React.FC<ClientAuthModalProps> = ({
       return;
     }
 
-    const newId = `CLI-${String(allClients.length + 1).padStart(2, '0')}`;
+    const maxClientNum = allClients.reduce((max, c) => {
+      const match = /^CLI-(\d+)$/i.exec(c.id);
+      return match ? Math.max(max, Number(match[1])) : max;
+    }, 0);
+    const newId = `CLI-${String(maxClientNum + 1).padStart(2, '0')}`;
     const normalizedDob = regDob.trim() || undefined;
     const newClient: ClientUser = {
       id: newId,
@@ -156,31 +160,10 @@ export const ClientAuthModal: React.FC<ClientAuthModalProps> = ({
       createdAt: new Date().toISOString().split('T')[0],
       dateOfBirth: normalizedDob,
       gender: regGender,
-      biometrics: {
-        systolicBP: 120,
-        diastolicBP: 80,
-        heartRate: 72,
-        bodyWeight: 70,
-        height: 170,
-        waistCircumference: 80,
-        bodyMass: 24.2,
-        dailyCalories: 2100,
-        fattyLiverGrade: 0,
-        lastUpdated: new Date().toISOString().replace('T', ' ').substring(0, 16),
-      },
-      goals: {
-        targetSystolicBP: 118,
-        targetDiastolicBP: 78,
-        targetHeartRate: 68,
-        targetWeight: 68,
-        targetBodyMass: 23.5,
-        targetCalories: 1950,
-        timelineWeeks: 8,
-        source: 'baseline_default',
-        aiRationale:
-          'Referencia inicial orientativa. Sube un informe médico para que la IA calcule tus metas sugeridas según tus biomarcadores reales.',
-      },
-      activeSupplements: ['SUP-OMEGA3'],
+      biometrics: null,
+      goals: null,
+      activeSupplements: [],
+      medicalReports: [],
     };
 
     onRegisterClient(newClient);

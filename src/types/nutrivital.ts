@@ -201,6 +201,7 @@ export interface MedicalReportRecord {
   detectedWeight?: number;
   detectedHeight?: number;
   detectedWaist?: number;
+  detectedDailyCalories?: number;
   suggestedGoals?: ClientHealthGoals;
   filePath?: string;
 }
@@ -245,8 +246,8 @@ export interface ClientUser {
   createdAt: string;
   dateOfBirth?: string; // Formato YYYY-MM-DD
   gender?: Gender;
-  biometrics: ClientBiometrics;
-  goals: ClientHealthGoals;
+  biometrics?: ClientBiometrics | null;
+  goals?: ClientHealthGoals | null;
   activeSupplements: string[];
   medicalReports?: MedicalReportRecord[]; // Informes médicos analizados por IA
 }

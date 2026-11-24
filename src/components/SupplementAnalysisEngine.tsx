@@ -66,7 +66,10 @@ interface SupplementAnalysisEngineProps {
   selectedChartMetric: ChartMetricFocus;
   timelineWeeks: number;
   medicalReports: MedicalReportRecord[];
-  onUploadMedicalReport: (report: MedicalReportRecord) => void;
+  onUploadMedicalReport: (
+    report: MedicalReportRecord,
+    rawFile?: File
+  ) => { ok: boolean; error?: string } | void;
   onDeleteMedicalReport: (reportId: string) => void;
   isAuthenticated: boolean;
   onRequireLogin: () => void;
@@ -106,9 +109,11 @@ export const SupplementAnalysisEngine: React.FC<SupplementAnalysisEngineProps> =
 
   const activeSet = new Set(activeSupplementIds);
 
-  // Datos biométricos proyectados
+  // Datos biométricos proyectados (solo desde datos reales del informe)
   const heightCm = biometrics.height || 170;
-  const currentWaistCm = biometrics.waistCircumference || 80;
+  const hasReportedWaist =
+    typeof biometrics.waistCircumference === 'number' && biometrics.waistCircumference > 0;
+  const currentWaistCm = hasReportedWaist ? biometrics.waistCircumference! : 0;
 
   const projectedSystolic = Math.round(biometrics.systolicBP + impactSummary.systolicDelta);
   const projectedDiastolic = Math.round(biometrics.diastolicBP + impactSummary.diastolicDelta);
@@ -125,11 +130,15 @@ export const SupplementAnalysisEngine: React.FC<SupplementAnalysisEngineProps> =
   const bmiRange = getMedicalMetricRange('bmi', projectedBmi);
   const bmiBadgeLabel = bmiRange.label.split(' (')[0];
 
-  // Cintura proyectada en tiempo real
-  const waistDelta = impactSummary.waistDelta ?? impactSummary.weightDelta;
-  const projectedWaist = Number(Math.max(40, currentWaistCm + waistDelta).toFixed(1));
-  const projectedWhtr = calculateWHtR(projectedWaist, heightCm);
-  const whtrStatus = impactSummary.whtrStatus || getWHtRStatus(projectedWhtr);
+  // Cintura proyectada en tiempo real (únicamente si fue reportada en el informe médico)
+  const waistDelta = hasReportedWaist ? (impactSummary.waistDelta ?? impactSummary.weightDelta) : 0;
+  const projectedWaist = hasReportedWaist
+    ? Number(Math.max(40, currentWaistCm + waistDelta).toFixed(1))
+    : 0;
+  const projectedWhtr = hasReportedWaist ? calculateWHtR(projectedWaist, heightCm) : 0;
+  const whtrStatus = hasReportedWaist
+    ? impactSummary.whtrStatus || getWHtRStatus(projectedWhtr)
+    : 'No reportada';
 
   // Telemetría de la curva activa en la gráfica
   const initialPoint = trendPoints[0];
@@ -223,7 +232,10 @@ export const SupplementAnalysisEngine: React.FC<SupplementAnalysisEngineProps> =
     setIsAnalyzingReport(true);
     try {
       const parsedReport = await analyzeMedicalReportFile(file);
-      onUploadMedicalReport(parsedReport);
+      const res = onUploadMedicalReport(parsedReport, file);
+      if (res && !res.ok && res.error) {
+        setReportError(res.error);
+      }
     } catch (err) {
       setReportError(
         err instanceof Error ? err.message : 'No se pudo analizar el informe médico.'
@@ -578,7 +590,7 @@ export const SupplementAnalysisEngine: React.FC<SupplementAnalysisEngineProps> =
           <div className="flex items-center justify-between gap-1">
             <span className="text-xs font-semibold text-slate-500 flex items-center gap-1.5">
               <Scale className="w-4 h-4 text-emerald-600 shrink-0" />
-              <span>Peso & Cintura</span>
+              <span>{hasReportedWaist ? 'Peso & Cintura' : 'Peso & IMC'}</span>
             </span>
             <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold border ${bmiRange.badgeClass}`}>
               {bmiBadgeLabel}
@@ -596,27 +608,49 @@ export const SupplementAnalysisEngine: React.FC<SupplementAnalysisEngineProps> =
               </span>
             </div>
 
-            <div className="flex items-center justify-between text-[11px] font-mono text-slate-600">
-              <span className="flex items-center gap-1 text-slate-500">
-                <Ruler className="w-3 h-3 text-emerald-600" />
-                <span>Cintura ({whtrStatus.split(' ')[0]}):</span>
-              </span>
-              <span className="font-bold text-slate-900">
-                {projectedWaist} cm ({projectedWhtr})
-              </span>
-            </div>
+            {hasReportedWaist ? (
+              <div className="flex items-center justify-between text-[11px] font-mono text-slate-600">
+                <span className="flex items-center gap-1 text-slate-500">
+                  <Ruler className="w-3 h-3 text-emerald-600" />
+                  <span>Cintura ({whtrStatus.split(' ')[0]}):</span>
+                </span>
+                <span className="font-bold text-slate-900">
+                  {projectedWaist} cm ({projectedWhtr})
+                </span>
+              </div>
+            ) : (
+              <p className="text-[11px] text-slate-500">
+                Meta IA:{' '}
+                <span className="font-mono font-semibold text-emerald-700">
+                  {goals.targetWeight} kg
+                </span>
+              </p>
+            )}
           </div>
 
           <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] font-mono">
-            <span className="text-slate-500">Cintura:</span>
-            <span
-              className={`font-bold ${waistDelta <= 0 ? 'text-emerald-700' : 'text-amber-700'
+            <span className="text-slate-500">{hasReportedWaist ? 'Cintura:' : 'Delta:'}</span>
+            {hasReportedWaist ? (
+              <span
+                className={`font-bold ${
+                  waistDelta <= 0 ? 'text-emerald-700' : 'text-amber-700'
                 }`}
-            >
-              {waistDelta <= 0
-                ? `▼ ${Math.abs(waistDelta).toFixed(1)} cm`
-                : `▲ +${waistDelta.toFixed(1)} cm`}
-            </span>
+              >
+                {waistDelta <= 0
+                  ? `▼ ${Math.abs(waistDelta).toFixed(1)} cm`
+                  : `▲ +${waistDelta.toFixed(1)} cm`}
+              </span>
+            ) : (
+              <span
+                className={`font-bold ${
+                  impactSummary.weightDelta <= 0 ? 'text-emerald-700' : 'text-amber-700'
+                }`}
+              >
+                {impactSummary.weightDelta <= 0
+                  ? `▼ ${Math.abs(impactSummary.weightDelta).toFixed(1)} kg`
+                  : `▲ +${impactSummary.weightDelta.toFixed(1)} kg`}
+              </span>
+            )}
           </div>
         </div>
 

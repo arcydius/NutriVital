@@ -65,9 +65,14 @@ function evaluateLocalNutriBotFallback(
   }
 
   if (lower.includes('higado') || lower.includes('graso') || lower.includes('esteatosis') || lower.includes('triglicerido')) {
-    const grade = client?.biometrics.fattyLiverGrade ?? 0;
+    const hasBio = Boolean(client?.biometrics && (client.medicalReports?.length ?? 0) > 0);
+    const gradeInfo = hasBio
+      ? ` (tu informe registra Hígado Graso Grado ${client!.biometrics!.fattyLiverGrade ?? 0})`
+      : client
+        ? ' (aún no has subido tu informe médico en Mi Salud & Biometría)'
+        : '';
     return {
-      text: `Respecto a la salud hepática${client ? ` (tu registro actual indica Hígado Graso Grado ${grade})` : ''}, recomendamos reducir azúcares simples, limitar la sal añadida y activar Omega-3 Vegano EPA+DHA junto con café funcional moderado por sus polifenoles hepatoprotectores.`,
+      text: `Respecto a la salud hepática${gradeInfo}, recomendamos reducir azúcares simples, limitar la sal añadida y evaluar Omega-3 Vegano EPA+DHA junto con café funcional moderado por sus polifenoles hepatoprotectores.`,
       category: 'Suplementos Naturales',
     };
   }
@@ -80,7 +85,10 @@ function evaluateLocalNutriBotFallback(
   }
 
   if (lower.includes('sal') || lower.includes('sodio') || lower.includes('presion')) {
-    const bp = client ? `${client.biometrics.systolicBP}/${client.biometrics.diastolicBP} mmHg` : 'tu presión actual';
+    const bp =
+      client?.biometrics && (client.medicalReports?.length ?? 0) > 0
+        ? `${client.biometrics.systolicBP}/${client.biometrics.diastolicBP} mmHg según tu informe`
+        : 'sube tu informe médico en Mi Salud & Biometría para analizar tu presión real';
     return {
       text: `Para optimizar la presión arterial (${bp}), es crucial moderar el consumo de sal refinada (que añade hasta +6 mmHg sistólicos) y equilibrar con Citrato de Potasio, Magnesio Bisglicinato y Omega-3 EPA+DHA.`,
       category: 'Suplementos Naturales',
@@ -88,9 +96,12 @@ function evaluateLocalNutriBotFallback(
   }
 
   if (lower.includes('pulso') || lower.includes('pulsacion') || lower.includes('latido') || lower.includes('ritmo') || lower.includes('corazon')) {
-    const hr = client ? `${client.biometrics.heartRate} lpm` : '60-80 lpm';
+    const hr =
+      client?.biometrics && (client.medicalReports?.length ?? 0) > 0
+        ? `tu informe registra ${client.biometrics.heartRate} lpm`
+        : 'aún no tienes un informe médico cargado';
     return {
-      text: `El rango normal en reposo es 60 a 80 lpm (tu registro: ${hr}). Puedes optimizar tu curva de pulsaciones reduciendo estimulantes nocturnos y activando Extracto KSM-66 Ashwagandha en la simulación.`,
+      text: `El rango normal en reposo es 60 a 80 lpm (${hr}). Cuando subas tu informe médico podrás simular tu curva de pulsaciones con Extracto KSM-66 Ashwagandha.`,
       category: 'Suplementos Naturales',
     };
   }
@@ -204,13 +215,18 @@ export const NutriBotWidget: React.FC<NutriBotWidgetProps> = ({
     setIsTyping(true);
 
     try {
+      const hasReport = Boolean(
+        currentClient?.biometrics && (currentClient.medicalReports?.length ?? 0) > 0
+      );
       const userContext = currentClient
         ? {
             name: currentClient.name,
             age: calculateAge(currentClient.dateOfBirth),
             gender: currentClient.gender,
-            biometrics: currentClient.biometrics,
-            activeSupplements: currentClient.activeSupplements,
+            hasMedicalReport: hasReport,
+            biometrics: hasReport ? currentClient.biometrics : null,
+            goals: hasReport ? currentClient.goals : null,
+            activeSupplements: hasReport ? currentClient.activeSupplements : [],
           }
         : undefined;
 

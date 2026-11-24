@@ -15,10 +15,12 @@ import {
   calculateAiSuggestedGoals,
   calculateProjectedImpact,
   calculateSeriesLinearRegression,
+  estimateMaintenanceCalories,
   generateDynamicBiometricTrend,
   generateNutritionalRecommendations,
   getBloodPressureCategory,
   getMedicalMetricRange,
+  validateInitialReportRequirements,
 } from './healthAnalytics';
 import { AVAILABLE_SUPPLEMENTS, INITIAL_CLIENT_USERS, INITIAL_PRODUCTS } from '../data/seedData';
 import { analyzeMedicalReportFile, parseTextLabMarkers } from './medicalReportAnalyzer';
@@ -549,4 +551,61 @@ test('Model coherence: excess salt reduces vitality, lab triglycerides affect he
       assert.ok(validSuppIds.has(r.relatedSupplementId), `Unknown supplement ID recommended: ${r.relatedSupplementId}`);
     }
   }
+});
+
+test('Clients start with zero metrics/goals until a complete medical report is uploaded', () => {
+  for (const client of INITIAL_CLIENT_USERS) {
+    assert.equal(client.biometrics, null, 'Initial biometrics must be null before report upload');
+    assert.equal(client.goals, null, 'Initial goals must be null before report upload');
+    assert.deepEqual(client.activeSupplements, [], 'No supplements should be pre-selected');
+    assert.deepEqual(client.medicalReports, [], 'No medical reports should be pre-loaded');
+  }
+
+  // Incomplete first report (only lab markers, missing vitals/anthropometrics) must be rejected
+  const partialParsed = parseTextLabMarkers('Glucosa: 95 mg/dL\nTriglicéridos: 140 mg/dL', 'parcial.txt');
+  assert.ok(partialParsed !== null);
+  const checkPartial = validateInitialReportRequirements(partialParsed, false);
+  assert.equal(checkPartial.valid, false);
+  assert.equal(checkPartial.missingFields.length, 4);
+
+  // Follow-up lab report on an account that ALREADY has baseline biometrics IS allowed
+  const checkFollowUp = validateInitialReportRequirements(partialParsed, true);
+  assert.equal(checkFollowUp.valid, true);
+
+  // Complete first report (including height in meters and "Pulsaciones") must pass
+  const completeText = [
+    'TA: 126/82 mmHg',
+    'Pulsaciones: 74 lpm',
+    'Peso corporal: 78.5 kg',
+    'Estatura: 1.75 m',
+    'Glucosa en ayunas: 98 mg/dL',
+  ].join('\n');
+  const completeParsed = parseTextLabMarkers(completeText, 'informe_completo.txt');
+  assert.ok(completeParsed !== null);
+  assert.equal(completeParsed.detectedHeight, 175, 'Height in meters must normalize to cm');
+  assert.equal(completeParsed.detectedHeartRate, 74);
+  const checkComplete = validateInitialReportRequirements(completeParsed, false);
+  assert.equal(checkComplete.valid, true);
+  assert.equal(checkComplete.missingFields.length, 0);
+
+  // Maintenance calories via Mifflin-St Jeor & optional waist circumference
+  const estCal = estimateMaintenanceCalories(78.5, 175, 34, 'Masculino');
+  assert.ok(estCal >= 2200 && estCal <= 2600);
+
+  const bioWithoutWaist = {
+    systolicBP: 126,
+    diastolicBP: 82,
+    heartRate: 74,
+    bodyWeight: 78.5,
+    height: 175,
+    waistCircumference: undefined,
+    bodyMass: 25.6,
+    dailyCalories: estCal,
+    fattyLiverGrade: 0 as const,
+    lastUpdated: '2026-11-24',
+  };
+  const aiGoals = calculateAiSuggestedGoals(bioWithoutWaist, completeParsed, 34, 'Masculino');
+  const impactNoWaist = calculateProjectedImpact(bioWithoutWaist, aiGoals, [], estCal, aiGoals.timelineWeeks, [completeParsed], 34);
+  assert.equal(impactNoWaist.whtrStatus, 'No reportada');
+  assert.equal(impactNoWaist.waistDelta, 0);
 });

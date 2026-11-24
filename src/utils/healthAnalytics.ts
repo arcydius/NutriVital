@@ -311,6 +311,78 @@ export const AI_GOAL_DISCLAIMER =
   'Meta sugerida automáticamente por Inteligencia Artificial con fines orientativos. No constituye diagnóstico ni prescripción médica y no suplanta a un médico ni a un nutricionista clínico.';
 
 /**
+ * Estima el gasto calórico diario de mantenimiento (fórmula clínica Mifflin-St Jeor)
+ * únicamente a partir de los datos antropométricos reales extraídos del informe del usuario.
+ */
+export function estimateMaintenanceCalories(
+  weightKg: number,
+  heightCm: number,
+  age?: number,
+  gender?: string
+): number {
+  const effectiveAge = age !== undefined && age > 0 ? age : 35;
+  const sexOffset = gender === 'Masculino' ? 5 : gender === 'Femenino' ? -161 : -78;
+  const bmr = 10 * weightKg + 6.25 * heightCm - 5 * effectiveAge + sexOffset;
+  const tdee = bmr * 1.375; // Actividad ligera habitual
+  return Math.max(1400, Math.min(3400, Math.round(tdee / 50) * 50));
+}
+
+/**
+ * Verifica que el primer informe médico del usuario contenga todos los signos vitales
+ * y datos antropométricos indispensables para construir sus métricas y proyecciones sin inventar valores.
+ */
+export function validateInitialReportRequirements(
+  report: MedicalReportRecord,
+  hasExistingBiometrics: boolean
+): { valid: boolean; missingFields: string[] } {
+  if (hasExistingBiometrics) {
+    return { valid: true, missingFields: [] };
+  }
+
+  const missingFields: string[] = [];
+
+  const hasValidBp =
+    typeof report.detectedSystolicBP === 'number' &&
+    report.detectedSystolicBP >= 70 &&
+    report.detectedSystolicBP <= 250 &&
+    typeof report.detectedDiastolicBP === 'number' &&
+    report.detectedDiastolicBP >= 40 &&
+    report.detectedDiastolicBP <= 160;
+  if (!hasValidBp) {
+    missingFields.push('Presión arterial (ej. 120/80 mmHg)');
+  }
+
+  const hasValidHr =
+    typeof report.detectedHeartRate === 'number' &&
+    report.detectedHeartRate >= 35 &&
+    report.detectedHeartRate <= 220;
+  if (!hasValidHr) {
+    missingFields.push('Pulsaciones / Frecuencia cardíaca (ej. 72 lpm)');
+  }
+
+  const hasValidWeight =
+    typeof report.detectedWeight === 'number' &&
+    report.detectedWeight >= 25 &&
+    report.detectedWeight <= 300;
+  if (!hasValidWeight) {
+    missingFields.push('Peso corporal en kg (ej. 75 kg)');
+  }
+
+  const hasValidHeight =
+    typeof report.detectedHeight === 'number' &&
+    report.detectedHeight >= 100 &&
+    report.detectedHeight <= 240;
+  if (!hasValidHeight) {
+    missingFields.push('Estatura / Talla (ej. 175 cm o 1.75 m)');
+  }
+
+  return {
+    valid: missingFields.length === 0,
+    missingFields,
+  };
+}
+
+/**
  * Calcula metas orientativas seguras y realistas mediante IA / reglas clínicas
  * al analizar un informe médico. Si Gemini devolvió una propuesta en report.suggestedGoals,
  * valida y acota los rangos a límites fisiológicos seguros.
@@ -494,7 +566,8 @@ export function calculateProjectedImpact(
 ): ProjectedImpactSummary & { waistDelta: number; whtr: number; whtrStatus: string; hepaticRiskScore: number; baselineHepaticRiskScore: number } {
   const weeksClamped = Math.max(1, Math.min(24, weeks));
   const heightCm = biometrics.height || 170;
-  const waistCm = biometrics.waistCircumference || 80;
+  const hasWaist = typeof biometrics.waistCircumference === 'number' && biometrics.waistCircumference > 0;
+  const waistCm = hasWaist ? biometrics.waistCircumference! : 0;
 
   const baselineCal = biometrics.dailyCalories || 2100;
   const calorieDelta = simulatedCalories - baselineCal;
@@ -514,14 +587,14 @@ export function calculateProjectedImpact(
   const totalWeeklyWeightChange = weeklyCaloricWeightChange + supplementWeeklyWeightRate;
   const totalWeightDelta = Number((totalWeeklyWeightChange * weeksClamped).toFixed(2));
 
-  const waistDelta = Number(totalWeightDelta.toFixed(1));
-  const projectedWaist = Math.max(40, waistCm + waistDelta);
-  const currentWhtr = calculateWHtR(waistCm, heightCm);
-  const projectedWhtr = calculateWHtR(projectedWaist, heightCm);
-  const whtrStatus = getWHtRStatus(projectedWhtr);
+  const waistDelta = hasWaist ? Number(totalWeightDelta.toFixed(1)) : 0;
+  const projectedWaist = hasWaist ? Math.max(40, waistCm + waistDelta) : 0;
+  const currentWhtr = hasWaist ? calculateWHtR(waistCm, heightCm) : undefined;
+  const projectedWhtr = hasWaist ? calculateWHtR(projectedWaist, heightCm) : 0;
+  const whtrStatus = hasWaist ? getWHtRStatus(projectedWhtr) : 'No reportada';
 
   // Solo el CAMBIO en adiposidad visceral afecta el delta de presión (sin penalizar el estado basal dos veces)
-  const visceralFatBpDelta = (projectedWhtr - currentWhtr) * 18;
+  const visceralFatBpDelta = hasWaist && currentWhtr !== undefined ? (projectedWhtr - currentWhtr) * 18 : 0;
 
   const projectedWeight = Math.max(40, biometrics.bodyWeight + totalWeightDelta);
   const baselineBmi = biometrics.height
@@ -574,7 +647,7 @@ export function calculateProjectedImpact(
     projectedHr,
     projectedMass,
     supplementVitalityBonus,
-    projectedWhtr
+    hasWaist ? projectedWhtr : undefined
   );
 
   const bpCategory = getBloodPressureCategory(projectedSystolic, projectedDiastolic, age);
@@ -583,7 +656,7 @@ export function calculateProjectedImpact(
   if (
     projectedScore > baselineScore + 2 ||
     (totalSystolicDelta < -1.5 && biometrics.systolicBP > 120) ||
-    projectedWhtr < currentWhtr
+    (hasWaist && currentWhtr !== undefined && projectedWhtr < currentWhtr)
   ) {
     trendDirection = 'improving';
   } else if (projectedScore < baselineScore - 2 || (totalSystolicDelta > 3 && biometrics.systolicBP >= 125)) {
@@ -612,7 +685,7 @@ export function calculateProjectedImpact(
   ) {
     baselineHepaticRiskScore += 8;
   }
-  if (currentWhtr > 0.53) baselineHepaticRiskScore += 12;
+  if (hasWaist && currentWhtr !== undefined && currentWhtr > 0.53) baselineHepaticRiskScore += 12;
   baselineHepaticRiskScore = Math.max(0, Math.min(100, Math.round(baselineHepaticRiskScore)));
 
   let hepaticRiskScore = baselineHepaticRiskScore;
@@ -661,7 +734,8 @@ export function generateDynamicBiometricTrend(
 ): BiometricTrendPoint[] {
   const weeksTotal = Math.max(4, Math.min(16, timelineWeeks));
   const heightCm = biometrics.height || 170;
-  const waistCm = biometrics.waistCircumference || 80;
+  const hasWaist = typeof biometrics.waistCircumference === 'number' && biometrics.waistCircumference > 0;
+  const waistCm = hasWaist ? biometrics.waistCircumference! : 0;
 
   const impact = calculateProjectedImpact(
     biometrics,
@@ -692,7 +766,7 @@ export function generateDynamicBiometricTrend(
   const baselineBmi = biometrics.height
     ? calculateBMI(biometrics.bodyWeight, biometrics.height)
     : biometrics.bodyMass || 24;
-  const baselineWhtr = calculateWHtR(waistCm, heightCm);
+  const baselineWhtr = hasWaist ? calculateWHtR(waistCm, heightCm) : undefined;
 
   const initialFattyScore = impact.baselineHepaticRiskScore;
 
@@ -740,8 +814,8 @@ export function generateDynamicBiometricTrend(
       ? calculateBMI(curWeight, biometrics.height)
       : Number(((biometrics.bodyMass || 24) + impact.bodyMassDelta * progressRatio).toFixed(1));
 
-    const curWaist = Math.max(40, waistCm + impact.waistDelta * progressRatio);
-    const curWhtr = calculateWHtR(curWaist, heightCm);
+    const curWaist = hasWaist ? Math.max(40, waistCm + impact.waistDelta * progressRatio) : 0;
+    const curWhtr = hasWaist ? calculateWHtR(curWaist, heightCm) : undefined;
 
     const curScore = calculateOverallVitalityScore(
       curSystolic,
@@ -798,7 +872,8 @@ export function generateNutritionalRecommendations(
   const activeIds = new Set(selectedSupplements.map((s) => s.id));
   const activeNames = selectedSupplements.map((s) => s.name.toLowerCase());
   const heightCm = biometrics.height || 170;
-  const waistCm = biometrics.waistCircumference || 80;
+  const hasWaist = typeof biometrics.waistCircumference === 'number' && biometrics.waistCircumference > 0;
+  const waistCm = hasWaist ? biometrics.waistCircumference! : 0;
   const currentMetricFocus = selectedChartMetric || 'presion';
 
   // Localizador estricto de productos reales del catálogo (evita vincular productos no relacionados)
@@ -1028,8 +1103,8 @@ export function generateNutritionalRecommendations(
   const weightGapToGoal = Number((finalPt.bodyWeight - goals.targetWeight).toFixed(1));
   const weightCurveChange = Number((finalPt.bodyWeight - initialPt.bodyWeight).toFixed(1));
   const calDeltaVsTarget = simulatedCalories - goals.targetCalories;
-  const projectedWaist = Math.max(40, waistCm + weightCurveChange);
-  const projectedWhtr = calculateWHtR(projectedWaist, heightCm);
+  const projectedWaist = hasWaist ? Math.max(40, waistCm + weightCurveChange) : 0;
+  const projectedWhtr = hasWaist ? calculateWHtR(projectedWaist, heightCm) : 0;
 
   if (calDeltaVsTarget > 200 || (weightGapToGoal > 1.5 && weightCurveChange >= 0)) {
     const suggestedCut = Math.min(450, Math.max(200, calDeltaVsTarget > 0 ? Math.round(calDeltaVsTarget / 50) * 50 : 250));
@@ -1046,7 +1121,7 @@ export function generateNutritionalRecommendations(
       chartMetricTrigger: 'peso_masa',
       metricEvidence: `${initialPt.bodyWeight} kg → ${finalPt.bodyWeight} kg · IMC ${finalPt.bodyMass}`,
     });
-  } else if (projectedWhtr > 0.50) {
+  } else if (hasWaist && projectedWhtr > 0.50) {
     recs.push({
       id: 'rec-curve-whtr-visceral',
       category: 'suplemento',

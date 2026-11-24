@@ -1,0 +1,37 @@
+========================================================================
+INSTITUTO DE MEDICINA INTERNA & CARDIOMETABOLISMO - INFORME CLINICO
+========================================================================
+Paciente: Carlos Mendoza
+ID Cliente: CLI-02
+Fecha de Nacimiento: 1988-11-22 | Género: Masculino
+Fecha de Emisión: 2026-11-21
+Tipo de Estudio: Chequeo Cardiometabólico Integral y Ecografía Hepática
+
+--- 1. SIGNOS VITALES Y ANTROPOMETRIA ---
+Presión Arterial: 144/92 mmHg
+Frecuencia Cardíaca: 86 lpm
+Peso Corporal: 94.5 kg
+Estatura: 176 cm
+Perímetro abdominal (Cintura): 102 cm
+Ingesta calórica: 2700 kcal
+
+--- 2. BIOMARCADORES DE LABORATORIO ---
+Glucosa en ayunas: 118 mg/dL (Ref: 70-99 mg/dL) [ALTERADA]
+Hemoglobina Glicosilada (HbA1c): 6.1 % (Ref: <5.7 %) [PREDIABETES]
+Colesterol LDL: 156 mg/dL (Ref: <100 mg/dL) [ALTO]
+Colesterol HDL: 38 mg/dL (Ref: >50 mg/dL) [BAJO]
+Triglicéridos: 238 mg/dL (Ref: <150 mg/dL) [HIPERTRIGLICERIDEMIA]
+Vitamina D (25-OH): 27 ng/mL (Ref: 30-60 ng/mL)
+PCR-us: 3.4 mg/L (Ref: <1.0 mg/L) [INFLAMACION SISTEMICA]
+Creatinina: 1.05 mg/dL (Ref: 0.6-1.2 mg/dL)
+Potasio: 4.4 mEq/L (Ref: 3.5-5.1 mEq/L)
+Ferritina: 145 ng/mL (Ref: 30-300 ng/mL)
+
+--- 3. EVALUACION HEPATICA ---
+Ecografía hepática: Esteatosis hepática moderada (Hígado Graso Grado 2).
+
+--- OBSERVACIONES MEDICAS ---
+Cuadro cardiometabólico con hipertensión estadio 1, frecuencia cardíaca
+en reposo elevada, adiposidad visceral aumentada (cintura 102 cm),
+resistencia a la insulina, hipertrigliceridemia y esteatosis hepática G2.
+========================================================================
