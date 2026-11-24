@@ -117,7 +117,7 @@ function evaluateLocalNutriBotFallback(
 
   if (lower.includes('meta') || lower.includes('objetivo')) {
     return {
-      text: 'Por protocolo clínico de NutriVital, las metas terapéuticas son calibradas exclusivamente por el equipo de nutrición en el Panel Administrador para garantizar tu seguridad médica.',
+      text: 'Al subir tu informe médico en "Mi Salud & Biometría", nuestra IA analiza tus biomarcadores y calcula automáticamente metas orientativas personalizadas. Recuerda que estas metas son sugeridas por IA y no sustituyen el criterio de un médico.',
     };
   }
 
@@ -139,7 +139,9 @@ export const NutriBotWidget: React.FC<NutriBotWidgetProps> = ({
   currentClient,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
-  const [isFolded, setIsFolded] = useState(false);
+  const [isFolded, setIsFolded] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth < 640 : false
+  );
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);

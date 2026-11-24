@@ -1,26 +1,193 @@
-import React, { useMemo, useState } from 'react';
-import { Sliders, Sparkles, Moon, Activity, Zap } from 'lucide-react';
-import { generateWellnessProjection } from '../utils/analytics';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Sliders, Sparkles, Activity, Scale, Zap, AlertCircle } from 'lucide-react';
+import { ClientUser, MedicalReportRecord } from '../types/nutrivital';
+import { AVAILABLE_SUPPLEMENTS } from '../data/seedData';
+import {
+  calculateAge,
+  calculateBMI,
+  calculateOverallVitalityScore,
+  calculateProjectedImpact,
+  calculateWHtR,
+} from '../utils/healthAnalytics';
 
-export const WellnessSimulator: React.FC = () => {
-  const [weeks, setWeeks] = useState<number>(8);
+interface WellnessSimulatorProps {
+  currentClient?: ClientUser | null;
+  activeSupplementIds?: string[];
+  simulatedCalories?: number;
+  medicalReports?: MedicalReportRecord[];
+}
+
+const DEFAULT_GUEST_BIOMETRICS: ClientUser['biometrics'] = {
+  systolicBP: 124,
+  diastolicBP: 82,
+  heartRate: 74,
+  bodyWeight: 67,
+  height: 170,
+  waistCircumference: 80,
+  bodyMass: 23.2,
+  dailyCalories: 2150,
+  fattyLiverGrade: 0,
+  lastUpdated: '2026-11-19',
+};
+
+const DEFAULT_GUEST_GOALS: ClientUser['goals'] = {
+  targetSystolicBP: 118,
+  targetDiastolicBP: 78,
+  targetHeartRate: 68,
+  targetWeight: 63,
+  targetBodyMass: 21.8,
+  targetCalories: 1950,
+  timelineWeeks: 12,
+  source: 'baseline_default',
+};
+
+interface AdherencePoint {
+  week: number;
+  weekLabel: string;
+  bpAlignmentScore: number; // 0..100 qué tan cerca está de la meta de PA
+  vitalityScore: number; // 0..100 score real de vitalidad
+  metabolicProtectionScore: number; // 0..100 (100 - riesgo hepático/metabólico)
+  projectedSystolic: number;
+  projectedDiastolic: number;
+  projectedWeight: number;
+  goalCompletionIndex: number;
+}
+
+export const WellnessSimulator: React.FC<WellnessSimulatorProps> = ({
+  currentClient = null,
+  activeSupplementIds = ['SUP-OMEGA3', 'SUP-MAGNESIO'],
+  simulatedCalories,
+  medicalReports = [],
+}) => {
+  const biometrics = currentClient?.biometrics ?? DEFAULT_GUEST_BIOMETRICS;
+  const goals = currentClient?.goals ?? DEFAULT_GUEST_GOALS;
+  const clientAge = calculateAge(currentClient?.dateOfBirth);
+  const effectiveCalories = simulatedCalories ?? biometrics.dailyCalories;
+
+  const [weeks, setWeeks] = useState<number>(() =>
+    Math.max(4, Math.min(12, goals.timelineWeeks || 8))
+  );
   const [adherence, setAdherence] = useState<number>(85);
 
-  const projection = useMemo(
-    () => generateWellnessProjection(weeks, adherence),
-    [weeks, adherence]
-  );
+  // Sincroniza horizonte inicial cuando cambian las metas sugeridas por IA del usuario
+  useEffect(() => {
+    if (goals.timelineWeeks) {
+      setWeeks(Math.max(4, Math.min(12, goals.timelineWeeks)));
+    }
+  }, [goals.timelineWeeks]);
+
+  const selectedSupplements = useMemo(() => {
+    const idSet = new Set(activeSupplementIds);
+    return AVAILABLE_SUPPLEMENTS.filter((s) => idSet.has(s.id));
+  }, [activeSupplementIds]);
+
+  const projection = useMemo<AdherencePoint[]>(() => {
+    const fullImpact = calculateProjectedImpact(
+      biometrics,
+      goals,
+      selectedSupplements,
+      effectiveCalories,
+      weeks,
+      medicalReports,
+      clientAge
+    );
+
+    const adherenceFactor = adherence / 100;
+    const heightCm = biometrics.height || 170;
+    const waistCm = biometrics.waistCircumference || 80;
+    const maxAdaptation = 1 - Math.exp(-2.2);
+    const supplementBonus = selectedSupplements.reduce(
+      (sum, s) => sum + (s.vitalityScoreBonus ?? 0) * 0.55,
+      0
+    );
+
+    const points: AdherencePoint[] = [];
+    for (let w = 1; w <= weeks; w++) {
+      const progressRatio = w / weeks;
+      const adaptationCurve = (1 - Math.exp(-2.2 * progressRatio)) / maxAdaptation;
+      const effectiveFactor = adaptationCurve * adherenceFactor;
+      const weightFactor = progressRatio * adherenceFactor;
+
+      const curSys = Number(
+        Math.max(90, Math.min(200, biometrics.systolicBP + fullImpact.systolicDelta * effectiveFactor)).toFixed(1)
+      );
+      const curDia = Number(
+        Math.max(55, Math.min(130, biometrics.diastolicBP + fullImpact.diastolicDelta * effectiveFactor)).toFixed(1)
+      );
+      const curHr = Number(
+        Math.max(48, Math.min(130, biometrics.heartRate + fullImpact.heartRateDelta * effectiveFactor)).toFixed(1)
+      );
+      const curWeight = Number(
+        Math.max(40, biometrics.bodyWeight + fullImpact.weightDelta * weightFactor).toFixed(1)
+      );
+      const curBmi = calculateBMI(curWeight, heightCm) || biometrics.bodyMass;
+      const curWaist = Math.max(40, waistCm + fullImpact.waistDelta * weightFactor);
+      const curWhtr = calculateWHtR(curWaist, heightCm);
+
+      const vitalityScore = calculateOverallVitalityScore(
+        curSys,
+        curDia,
+        curHr,
+        curBmi,
+        supplementBonus * effectiveFactor,
+        curWhtr
+      );
+
+      // Alineación arterial (0-100): 100 cuando alcanza o mejora la Meta IA
+      const sysOverTarget = Math.max(0, curSys - goals.targetSystolicBP);
+      const diaOverTarget = Math.max(0, curDia - goals.targetDiastolicBP);
+      const bpAlignmentScore = Math.max(
+        20,
+        Math.min(100, Math.round(100 - sysOverTarget * 2.8 - diaOverTarget * 2.2))
+      );
+
+      // Protección hepática/metabólica (100 - riesgo hepático proyectado)
+      const curHepaticRisk = Math.max(
+        0,
+        Math.min(
+          100,
+          Math.round(
+            fullImpact.baselineHepaticRiskScore +
+              (fullImpact.hepaticRiskScore - fullImpact.baselineHepaticRiskScore) * effectiveFactor
+          )
+        )
+      );
+      const metabolicProtectionScore = Math.max(10, Math.min(100, 100 - curHepaticRisk));
+
+      const goalCompletionIndex = Math.round(
+        bpAlignmentScore * 0.35 + vitalityScore * 0.4 + metabolicProtectionScore * 0.25
+      );
+
+      points.push({
+        week: w,
+        weekLabel: `Sem ${w}`,
+        bpAlignmentScore,
+        vitalityScore,
+        metabolicProtectionScore,
+        projectedSystolic: curSys,
+        projectedDiastolic: curDia,
+        projectedWeight: curWeight,
+        goalCompletionIndex,
+      });
+    }
+
+    return points;
+  }, [biometrics, goals, selectedSupplements, effectiveCalories, weeks, adherence, medicalReports, clientAge]);
 
   const finalPoint = projection[projection.length - 1] ?? {
     week: 1,
     weekLabel: 'Sem 1',
-    energyScore: 50,
-    sleepQuality: 48,
-    inflammationReduction: 25,
-    compositeVitality: 41,
+    bpAlignmentScore: 80,
+    vitalityScore: 75,
+    metabolicProtectionScore: 85,
+    projectedSystolic: biometrics.systolicBP,
+    projectedDiastolic: biometrics.diastolicBP,
+    projectedWeight: biometrics.bodyWeight,
+    goalCompletionIndex: 80,
   };
 
-  const initialPoint = projection[0] ?? finalPoint;
+  const weightChangeTotal = Number((finalPoint.projectedWeight - biometrics.bodyWeight).toFixed(1));
+  const sysChangeTotal = Number((finalPoint.projectedSystolic - biometrics.systolicBP).toFixed(1));
 
   // SVG Chart dimensions
   const chartWidth = 760;
@@ -42,7 +209,7 @@ export const WellnessSimulator: React.FC = () => {
     return padTop + innerHeight - (clamped / 100) * innerHeight;
   };
 
-  const buildSmoothPath = (values: number[]) => {
+  const buildPath = (values: number[]) => {
     if (values.length === 0) return '';
     if (values.length === 1) {
       const x = getX(0, 1);
@@ -60,16 +227,16 @@ export const WellnessSimulator: React.FC = () => {
 
   const buildAreaPath = (values: number[]) => {
     if (values.length <= 1) return '';
-    const line = buildSmoothPath(values);
+    const line = buildPath(values);
     const firstX = getX(0, values.length).toFixed(1);
     const lastX = getX(values.length - 1, values.length).toFixed(1);
     const baselineY = (padTop + innerHeight).toFixed(1);
     return `${line} L ${lastX} ${baselineY} L ${firstX} ${baselineY} Z`;
   };
 
-  const energyValues = projection.map((p) => p.energyScore);
-  const sleepValues = projection.map((p) => p.sleepQuality);
-  const inflammationValues = projection.map((p) => p.inflammationReduction);
+  const vitalityValues = projection.map((p) => p.vitalityScore);
+  const bpAlignValues = projection.map((p) => p.bpAlignmentScore);
+  const metabolicValues = projection.map((p) => p.metabolicProtectionScore);
 
   return (
     <section
@@ -78,34 +245,34 @@ export const WellnessSimulator: React.FC = () => {
       className="py-16 bg-[#F0FDF4]/70 border-y border-emerald-100"
     >
       <div className="max-w-7xl mx-auto px-6">
-        <div className="max-w-3xl mb-10">
-          <p className="text-xs font-medium text-emerald-800 tracking-wide mb-2">
-            Simulador Fisiológico Interactivo · Proyección de Bienestar
+        <div className="max-w-3xl mb-8">
+          <p className="text-xs font-semibold text-emerald-800 tracking-wide mb-2">
+            Proyección de Adherencia · Conectada a tu Protocolo y Metas IA
           </p>
           <h2
             id="wellness-sim-heading"
             className="text-3xl md:text-4xl font-bold text-slate-900 tracking-tight"
           >
-            Calcula tu Transformación Saludable
+            Simula tu Constancia Semana a Semana
           </h2>
-          <p className="mt-3 text-base text-slate-600 leading-relaxed">
-            Ajusta el horizonte de semanas de suplementación continua y tu porcentaje de adherencia nutricional para proyectar el impacto esperado en energía celular, arquitectura del sueño y reducción de marcadores inflamatorios.
+          <p className="mt-3 text-sm sm:text-base text-slate-600 leading-relaxed">
+            Mientras arriba eliges <strong>qué suplementos y calorías</strong> incluir en tu plan, aquí proyectas cómo responde tu perfil actual (<strong>{currentClient ? currentClient.name : 'Modo Invitado'}</strong> · {selectedSupplements.length} {selectedSupplements.length === 1 ? 'factor activo' : 'factores activos'} · {effectiveCalories} kcal/día) según tu porcentaje real de cumplimiento.
           </p>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-stretch">
           {/* Controls Panel */}
           <div className="lg:col-span-4 bg-white rounded-2xl border border-emerald-100/80 shadow-sm p-6 flex flex-col justify-between">
-            <div className="space-y-7">
+            <div className="space-y-6">
               <div className="flex items-center justify-between border-b border-slate-100 pb-4">
                 <div className="flex items-center gap-2.5">
                   <Sliders className="w-5 h-5 text-emerald-600" aria-hidden="true" />
                   <h3 className="text-base font-semibold text-slate-900">
-                    Parámetros de tu Plan
+                    Constancia del Plan
                   </h3>
                 </div>
-                <span className="text-xs text-slate-500 font-mono tabular-nums">
-                  Índice Vital: {finalPoint.compositeVitality}/100
+                <span className="text-xs text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-lg font-mono font-bold tabular-nums">
+                  Avance: {finalPoint.goalCompletionIndex}%
                 </span>
               </div>
 
@@ -116,7 +283,7 @@ export const WellnessSimulator: React.FC = () => {
                     htmlFor="slider-weeks"
                     className="text-sm font-medium text-slate-800"
                   >
-                    Semanas de consumo continuo
+                    Horizonte de seguimiento
                   </label>
                   <span className="text-lg font-bold text-emerald-700 font-mono tabular-nums">
                     {weeks} {weeks === 1 ? 'semana' : 'semanas'}
@@ -124,6 +291,7 @@ export const WellnessSimulator: React.FC = () => {
                 </div>
                 <input
                   id="slider-weeks"
+                  name="weeks"
                   type="range"
                   min={1}
                   max={12}
@@ -132,10 +300,10 @@ export const WellnessSimulator: React.FC = () => {
                   onChange={(e) => setWeeks(Number(e.target.value))}
                   className="w-full h-2 bg-emerald-100 rounded-lg appearance-none cursor-pointer accent-emerald-600"
                 />
-                <div className="flex justify-between text-xs text-slate-400 font-mono tabular-nums mt-1.5">
-                  <span>1 sem (Inicio)</span>
-                  <span>6 sem (Adaptación)</span>
-                  <span>12 sem (Óptimo)</span>
+                <div className="flex justify-between gap-2 text-[11px] text-slate-400 font-mono tabular-nums mt-1.5">
+                  <span>1 sem · Inicio</span>
+                  <span>6 sem · Adapt.</span>
+                  <span>12 sem · Óptimo</span>
                 </div>
               </div>
 
@@ -146,7 +314,7 @@ export const WellnessSimulator: React.FC = () => {
                     htmlFor="slider-adherence"
                     className="text-sm font-medium text-slate-800"
                   >
-                    Nivel de adherencia al plan nutricional
+                    Nivel de adherencia real
                   </label>
                   <span className="text-lg font-bold text-emerald-700 font-mono tabular-nums">
                     {adherence}%
@@ -154,6 +322,7 @@ export const WellnessSimulator: React.FC = () => {
                 </div>
                 <input
                   id="slider-adherence"
+                  name="adherence"
                   type="range"
                   min={50}
                   max={100}
@@ -162,17 +331,17 @@ export const WellnessSimulator: React.FC = () => {
                   onChange={(e) => setAdherence(Number(e.target.value))}
                   className="w-full h-2 bg-emerald-100 rounded-lg appearance-none cursor-pointer accent-emerald-600"
                 />
-                <div className="flex justify-between text-xs text-slate-400 font-mono tabular-nums mt-1.5">
-                  <span>50% (Moderado)</span>
-                  <span>75% (Consistente)</span>
-                  <span>100% (Disciplinado)</span>
+                <div className="flex justify-between gap-2 text-[11px] text-slate-400 font-mono tabular-nums mt-1.5">
+                  <span>50% · Moderado</span>
+                  <span>75% · Constante</span>
+                  <span>100% · Óptimo</span>
                 </div>
               </div>
 
               {/* Quick Preset Buttons */}
-              <div className="pt-2">
+              <div className="pt-1">
                 <p className="text-xs font-medium text-slate-500 mb-2.5">
-                  Escenarios rápidos de simulación:
+                  Escenarios rápidos de constancia:
                 </p>
                 <div className="grid grid-cols-3 gap-2">
                   <button
@@ -181,7 +350,7 @@ export const WellnessSimulator: React.FC = () => {
                       setWeeks(4);
                       setAdherence(70);
                     }}
-                    className={`px-3 py-2 text-xs font-medium rounded-lg border transition-colors whitespace-nowrap shrink-0 ${
+                    className={`px-2 py-2 text-[11px] font-semibold text-center leading-tight rounded-lg border transition-colors ${
                       weeks === 4 && adherence === 70
                         ? 'bg-emerald-600 text-white border-emerald-600'
                         : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-emerald-50'
@@ -195,7 +364,7 @@ export const WellnessSimulator: React.FC = () => {
                       setWeeks(8);
                       setAdherence(85);
                     }}
-                    className={`px-3 py-2 text-xs font-medium rounded-lg border transition-colors whitespace-nowrap shrink-0 ${
+                    className={`px-2 py-2 text-[11px] font-semibold text-center leading-tight rounded-lg border transition-colors ${
                       weeks === 8 && adherence === 85
                         ? 'bg-emerald-600 text-white border-emerald-600'
                         : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-emerald-50'
@@ -209,7 +378,7 @@ export const WellnessSimulator: React.FC = () => {
                       setWeeks(12);
                       setAdherence(100);
                     }}
-                    className={`px-3 py-2 text-xs font-medium rounded-lg border transition-colors whitespace-nowrap shrink-0 ${
+                    className={`px-2 py-2 text-[11px] font-semibold text-center leading-tight rounded-lg border transition-colors ${
                       weeks === 12 && adherence === 100
                         ? 'bg-emerald-600 text-white border-emerald-600'
                         : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-emerald-50'
@@ -221,58 +390,58 @@ export const WellnessSimulator: React.FC = () => {
               </div>
             </div>
 
-            {/* Summary KPI Cards at Week N */}
-            <div className="mt-8 pt-6 border-t border-slate-100 grid grid-cols-3 gap-3">
+            {/* Real Projected Outcome KPIs at Week N & Adherence% */}
+            <div className="mt-6 pt-5 border-t border-slate-100 grid grid-cols-3 gap-2.5">
               <div className="p-3 rounded-xl bg-[#F0FDF4] border border-emerald-100">
-                <div className="flex items-center gap-1 text-emerald-700 text-xs font-medium">
-                  <Zap className="w-3.5 h-3.5" aria-hidden="true" />
-                  <span>Energía</span>
+                <div className="flex items-center gap-1 text-emerald-700 text-[11px] font-semibold">
+                  <Activity className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                  <span>Presión</span>
                 </div>
-                <p className="mt-1 text-xl font-bold text-slate-900 font-mono tabular-nums">
-                  {finalPoint.energyScore}%
+                <p className="mt-1 text-base font-bold text-slate-900 font-mono tabular-nums">
+                  {Math.round(finalPoint.projectedSystolic)}/{Math.round(finalPoint.projectedDiastolic)}
                 </p>
-                <p className="text-[11px] text-emerald-700 font-mono tabular-nums">
-                  +{Math.max(0, finalPoint.energyScore - initialPoint.energyScore)}% vs sem 1
+                <p className="text-[10px] text-emerald-700 font-mono tabular-nums">
+                  {sysChangeTotal <= 0 ? `${sysChangeTotal}` : `+${sysChangeTotal}`} mmHg
                 </p>
               </div>
 
               <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80">
-                <div className="flex items-center gap-1 text-teal-700 text-xs font-medium">
-                  <Moon className="w-3.5 h-3.5" aria-hidden="true" />
-                  <span>Sueño</span>
+                <div className="flex items-center gap-1 text-teal-700 text-[11px] font-semibold">
+                  <Scale className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                  <span>Peso</span>
                 </div>
-                <p className="mt-1 text-xl font-bold text-slate-900 font-mono tabular-nums">
-                  {finalPoint.sleepQuality}%
+                <p className="mt-1 text-base font-bold text-slate-900 font-mono tabular-nums">
+                  {finalPoint.projectedWeight} kg
                 </p>
-                <p className="text-[11px] text-teal-700 font-mono tabular-nums">
-                  +{Math.max(0, finalPoint.sleepQuality - initialPoint.sleepQuality)}% vs sem 1
+                <p className="text-[10px] text-teal-700 font-mono tabular-nums">
+                  {weightChangeTotal <= 0 ? `${weightChangeTotal}` : `+${weightChangeTotal}`} kg
                 </p>
               </div>
 
               <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80">
-                <div className="flex items-center gap-1 text-emerald-800 text-xs font-medium">
-                  <Activity className="w-3.5 h-3.5" aria-hidden="true" />
-                  <span>Desinflam.</span>
+                <div className="flex items-center gap-1 text-emerald-800 text-[11px] font-semibold">
+                  <Zap className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                  <span>Vitalidad</span>
                 </div>
-                <p className="mt-1 text-xl font-bold text-slate-900 font-mono tabular-nums">
-                  {finalPoint.inflammationReduction}%
+                <p className="mt-1 text-base font-bold text-slate-900 font-mono tabular-nums">
+                  {finalPoint.vitalityScore}/100
                 </p>
-                <p className="text-[11px] text-emerald-800 font-mono tabular-nums">
-                  +{Math.max(0, finalPoint.inflammationReduction - initialPoint.inflammationReduction)}% vs sem 1
+                <p className="text-[10px] text-emerald-800 font-mono tabular-nums">
+                  Al {adherence}% plan
                 </p>
               </div>
             </div>
           </div>
 
-          {/* Dynamic Multi-Curve Chart */}
+          {/* Dynamic Multi-Curve Chart Connected to Real Model */}
           <div className="lg:col-span-8 bg-white rounded-2xl border border-emerald-100/80 shadow-sm p-6 flex flex-col justify-between">
             <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
               <div>
                 <h3 className="text-lg font-semibold text-slate-900">
-                  Curva de Evolución de Biomarcadores (Semanas 1 a {weeks})
+                  Convergencia hacia tus Metas IA (Semanas 1 a {weeks})
                 </h3>
                 <p className="text-xs text-slate-500">
-                  Adherencia configurada al {adherence}% · Actualización instantánea en tiempo real
+                  Calculado en vivo con tu perfil actual y {adherence}% de adherencia
                 </p>
               </div>
 
@@ -280,15 +449,15 @@ export const WellnessSimulator: React.FC = () => {
               <div className="flex flex-wrap items-center gap-4 text-xs text-slate-700">
                 <span className="flex items-center gap-1.5">
                   <span className="w-3 h-1 rounded bg-[#16A34A]" />
-                  Energía Diaria
+                  Vitalidad Celular
                 </span>
                 <span className="flex items-center gap-1.5">
                   <span className="w-3 h-1 rounded bg-[#0D9488]" />
-                  Calidad del Sueño
+                  Alineación Presión Arterial
                 </span>
                 <span className="flex items-center gap-1.5">
                   <span className="w-3 h-1 rounded bg-[#4ADE80]" />
-                  Reducción Inflamatoria
+                  Protección Hepática/Metab.
                 </span>
               </div>
             </div>
@@ -298,16 +467,15 @@ export const WellnessSimulator: React.FC = () => {
                 viewBox={`0 0 ${chartWidth} ${chartHeight}`}
                 className="w-full h-auto min-w-[520px]"
                 role="img"
-                aria-label={`Gráfica de proyección de bienestar para ${weeks} semanas con ${adherence}% de adherencia`}
+                aria-label={`Gráfica de convergencia hacia metas IA para ${weeks} semanas con ${adherence}% de adherencia`}
               >
                 <defs>
-                  <linearGradient id="energyAreaGrad" x1="0" y1="0" x2="0" y2="1">
+                  <linearGradient id="vitalityAreaGrad" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor="#4ADE80" stopOpacity="0.28" />
                     <stop offset="100%" stopColor="#86EFAC" stopOpacity="0.02" />
                   </linearGradient>
                 </defs>
 
-                {/* Horizontal Y Grid lines */}
                 {[0, 25, 50, 75, 100].map((val) => {
                   const y = getY(val);
                   return (
@@ -332,45 +500,37 @@ export const WellnessSimulator: React.FC = () => {
                   );
                 })}
 
-                {/* Area under Energy curve */}
                 {projection.length > 1 && (
-                  <path
-                    d={buildAreaPath(energyValues)}
-                    fill="url(#energyAreaGrad)"
-                  />
+                  <path d={buildAreaPath(vitalityValues)} fill="url(#vitalityAreaGrad)" />
                 )}
 
-                {/* Curve 3: Inflammation Reduction */}
                 <path
-                  d={buildSmoothPath(inflammationValues)}
+                  d={buildPath(metabolicValues)}
                   fill="none"
                   stroke="#4ADE80"
                   strokeWidth="2.5"
                   strokeDasharray="5 4"
                 />
 
-                {/* Curve 2: Sleep Quality */}
                 <path
-                  d={buildSmoothPath(sleepValues)}
+                  d={buildPath(bpAlignValues)}
                   fill="none"
                   stroke="#0D9488"
                   strokeWidth="2.75"
                 />
 
-                {/* Curve 1: Daily Energy */}
                 <path
-                  d={buildSmoothPath(energyValues)}
+                  d={buildPath(vitalityValues)}
                   fill="none"
                   stroke="#16A34A"
                   strokeWidth="3.25"
                 />
 
-                {/* Data Points & X Axis Labels */}
                 {projection.map((pt, idx) => {
                   const x = getX(idx, projection.length);
-                  const yEnergy = getY(pt.energyScore);
-                  const ySleep = getY(pt.sleepQuality);
-                  const yInflam = getY(pt.inflammationReduction);
+                  const yVit = getY(pt.vitalityScore);
+                  const yBp = getY(pt.bpAlignmentScore);
+                  const yMet = getY(pt.metabolicProtectionScore);
 
                   return (
                     <g key={pt.week}>
@@ -382,30 +542,9 @@ export const WellnessSimulator: React.FC = () => {
                         stroke="#F8FAFC"
                         strokeWidth="1"
                       />
-                      <circle
-                        cx={x}
-                        cy={yInflam}
-                        r={3.5}
-                        fill="#FFFFFF"
-                        stroke="#4ADE80"
-                        strokeWidth="2"
-                      />
-                      <circle
-                        cx={x}
-                        cy={ySleep}
-                        r={3.5}
-                        fill="#FFFFFF"
-                        stroke="#0D9488"
-                        strokeWidth="2"
-                      />
-                      <circle
-                        cx={x}
-                        cy={yEnergy}
-                        r={4.5}
-                        fill="#16A34A"
-                        stroke="#FFFFFF"
-                        strokeWidth="1.5"
-                      />
+                      <circle cx={x} cy={yMet} r={3.5} fill="#FFFFFF" stroke="#4ADE80" strokeWidth="2" />
+                      <circle cx={x} cy={yBp} r={3.5} fill="#FFFFFF" stroke="#0D9488" strokeWidth="2" />
+                      <circle cx={x} cy={yVit} r={4.5} fill="#16A34A" stroke="#FFFFFF" strokeWidth="1.5" />
                       <text
                         x={x}
                         y={chartHeight - 14}
@@ -420,16 +559,22 @@ export const WellnessSimulator: React.FC = () => {
               </svg>
             </div>
 
-            <div className="mt-4 pt-4 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-slate-600">
-              <p className="flex items-center gap-1.5">
-                <Sparkles className="w-4 h-4 text-emerald-600 shrink-0" aria-hidden="true" />
-                <span>
-                  En la <strong>Semana {weeks}</strong> con <strong>{adherence}%</strong> de adherencia, tu vitalidad combinada alcanza el <strong>{finalPoint.compositeVitality}%</strong>.
+            <div className="mt-4 pt-4 border-t border-slate-100 space-y-2 text-xs text-slate-600">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <p className="flex items-center gap-1.5">
+                  <Sparkles className="w-4 h-4 text-emerald-600 shrink-0" aria-hidden="true" />
+                  <span>
+                    En <strong>Semana {weeks}</strong> al <strong>{adherence}%</strong> de constancia, tu índice de avance hacia las Metas IA alcanza el <strong>{finalPoint.goalCompletionIndex}%</strong>.
+                  </span>
+                </p>
+                <span className="text-slate-400 font-mono tabular-nums shrink-0">
+                  Modelo Bio-Adaptativo Conectado
                 </span>
+              </div>
+              <p className="flex items-center gap-1.5 text-[11px] text-amber-800 bg-amber-50/80 border border-amber-200/80 rounded-xl px-3 py-1.5">
+                <AlertCircle className="w-3.5 h-3.5 text-amber-700 shrink-0" aria-hidden="true" />
+                <span>Simulación orientativa asistida por IA. Los resultados reales varían según cada persona y no reemplazan seguimiento médico.</span>
               </p>
-              <span className="text-slate-400 font-mono tabular-nums">
-                Modelo NutriVital Bio-Adaptativo
-              </span>
             </div>
           </div>
         </div>

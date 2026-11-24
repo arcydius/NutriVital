@@ -10,7 +10,9 @@ import {
 } from './analytics';
 import { AdminUser, ClientUser, Product, SaleRecord } from '../types/nutrivital';
 import {
+  AI_GOAL_DISCLAIMER,
   calculateAge,
+  calculateAiSuggestedGoals,
   calculateProjectedImpact,
   calculateSeriesLinearRegression,
   generateDynamicBiometricTrend,
@@ -443,4 +445,108 @@ test('Cart summary and guest session state remain deterministic upon logout', ()
     : null;
 
   assert.equal(currentClient, null, 'Current client must be null when session is null, not default to Laura');
+});
+
+test('calculateAiSuggestedGoals computes safe, bounded AI goals with mandatory medical disclaimer', () => {
+  const bio = {
+    systolicBP: 146,
+    diastolicBP: 92,
+    heartRate: 84,
+    bodyWeight: 88,
+    height: 175,
+    waistCircumference: 96,
+    bodyMass: 28.7,
+    dailyCalories: 2600,
+    fattyLiverGrade: 1 as const,
+    lastUpdated: '2026-11-24',
+  };
+
+  const report = {
+    id: 'REP-AI-1',
+    fileName: 'analitica_cardiometabolica.txt',
+    reportType: 'Chequeo Cardiometabólico' as const,
+    reportDate: '2026-11-24',
+    uploadedAt: '09:45',
+    aiClinicalSummary: 'Triglicéridos y presión elevados.',
+    markers: {
+      triglycerides: 210,
+      fastingGlucose: 112,
+      fattyLiverGrade: 1 as const,
+    },
+    flaggedFindings: ['Triglicéridos elevados'],
+    contraindications: [],
+    detectedSystolicBP: 146,
+    detectedDiastolicBP: 92,
+    detectedHeartRate: 84,
+  };
+
+  const suggested = calculateAiSuggestedGoals(bio, report, 38, 'Masculino');
+  assert.equal(suggested.source, 'ai_report');
+  assert.equal(suggested.generatedFromReportId, 'REP-AI-1');
+  assert.ok(suggested.targetSystolicBP >= 118 && suggested.targetSystolicBP <= 135);
+  assert.ok(suggested.targetWeight < bio.bodyWeight && suggested.targetWeight >= 70);
+  assert.ok(suggested.targetCalories >= 1700 && suggested.targetCalories < bio.dailyCalories);
+  assert.equal(suggested.timelineWeeks, 12);
+  assert.ok(
+    suggested.aiRationale?.includes('Inteligencia Artificial') &&
+      (suggested.aiRationale?.includes('no suplanta') || suggested.aiRationale?.includes('no sustituy')),
+    'Rationale must clearly state AI origin and non-medical disclaimer'
+  );
+  assert.ok(AI_GOAL_DISCLAIMER.length > 20);
+});
+
+test('Model coherence: excess salt reduces vitality, lab triglycerides affect hepatic risk, and all recommended supplement IDs exist', () => {
+  const bio = {
+    systolicBP: 130,
+    diastolicBP: 84,
+    heartRate: 76,
+    bodyWeight: 82,
+    height: 172,
+    waistCircumference: 95,
+    bodyMass: 27.7,
+    dailyCalories: 2300,
+    fattyLiverGrade: 0 as const,
+    lastUpdated: '2026-11-24',
+  };
+  const goals = {
+    targetSystolicBP: 118,
+    targetDiastolicBP: 78,
+    targetHeartRate: 68,
+    targetWeight: 77,
+    targetBodyMass: 26.0,
+    targetCalories: 2050,
+    timelineWeeks: 12,
+  };
+  const salt = AVAILABLE_SUPPLEMENTS.find((s) => s.id === 'SUP-SAL')!;
+  const baselineImpact = calculateProjectedImpact(bio, goals, [], 2300, 12, []);
+  const saltImpact = calculateProjectedImpact(bio, goals, [salt], 2300, 12, []);
+
+  // No phantom BP increase when nothing changes
+  assert.equal(baselineImpact.systolicDelta, 0);
+  // Excess salt must reduce vitality, not increase it
+  assert.ok(saltImpact.vitalityScore < baselineImpact.vitalityScore, 'Excess salt should lower vitality score');
+
+  // Lab triglycerides must raise baseline hepatic risk even if fattyLiverGrade is 0
+  const lipidReport = {
+    id: 'REP-LIP-1',
+    fileName: 'perfil_lipidico.txt',
+    reportType: 'Perfil Lipídico' as const,
+    reportDate: '2026-11-24',
+    uploadedAt: '10:00',
+    aiClinicalSummary: 'Triglicéridos altos.',
+    markers: { triglycerides: 220, fastingGlucose: 112 },
+    flaggedFindings: ['Triglicéridos elevados'],
+    contraindications: [],
+  };
+  const withLabImpact = calculateProjectedImpact(bio, goals, [], 2300, 12, [lipidReport]);
+  assert.ok(withLabImpact.baselineHepaticRiskScore > baselineImpact.baselineHepaticRiskScore);
+
+  // Every recommended supplement ID must exist in AVAILABLE_SUPPLEMENTS
+  const validSuppIds = new Set(AVAILABLE_SUPPLEMENTS.map((s) => s.id));
+  const recs = generateNutritionalRecommendations(bio, goals, [], 2550, INITIAL_PRODUCTS, undefined, 'peso_masa', [lipidReport]);
+  for (const r of recs) {
+    if (r.relatedSupplementId) {
+      assert.ok(validSuppIds.has(r.relatedSupplementId), `Unknown supplement ID recommended: ${r.relatedSupplementId}`);
+    }
+  }
 });

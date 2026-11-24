@@ -12,16 +12,17 @@ import {
   Check,
   Plus,
   User,
+  LogOut,
+  Menu,
+  X,
 } from 'lucide-react';
 import {
   AdminSession,
   AdminUser,
   CartItem,
   ClientBiometrics,
-  ClientHealthGoals,
   ClientSession,
   ClientUser,
-  Gender,
   MedicalReportRecord,
   OrderReceipt,
   Product,
@@ -38,6 +39,11 @@ import {
   calculateCartSummary,
   deductInventoryAfterPurchase,
 } from './utils/analytics';
+import {
+  calculateAge,
+  calculateAiSuggestedGoals,
+  calculateBMI,
+} from './utils/healthAnalytics';
 import { ProductIllustration } from './components/ProductIllustration';
 import { WellnessSimulator } from './components/WellnessSimulator';
 import { CartDrawer } from './components/CartDrawer';
@@ -45,7 +51,6 @@ import { NutriBotWidget } from './components/NutriBotWidget';
 import { AdminAuthModal } from './components/AdminAuthModal';
 import { AdminDashboard } from './components/AdminDashboard';
 import { ClientAuthModal } from './components/ClientAuthModal';
-import { ClientBiometricsModal } from './components/ClientBiometricsModal';
 import { HealthAnalyticsSection } from './components/HealthAnalyticsSection';
 import { ChartMetricView } from './components/DynamicProgressChart';
 import { nutriApi } from './services/api';
@@ -145,7 +150,6 @@ export default function App() {
   }, [clients, clientSession]);
 
   const [isClientAuthModalOpen, setIsClientAuthModalOpen] = useState<boolean>(false);
-  const [isClientBiometricsModalOpen, setIsClientBiometricsModalOpen] = useState<boolean>(false);
   const [activeSupplementIds, setActiveSupplementIds] = useState<string[]>(() => {
     return INITIAL_CLIENT_USERS[0].activeSupplements || ['SUP-OMEGA3', 'SUP-MAGNESIO'];
   });
@@ -153,20 +157,27 @@ export default function App() {
     return INITIAL_CLIENT_USERS[0].biometrics.dailyCalories || 2200;
   });
   const [selectedChartMetric, setSelectedChartMetric] = useState<ChartMetricView>('presion');
-  const [medicalReports, setMedicalReports] = useState<MedicalReportRecord[]>(() => {
-    return currentClient?.medicalReports || [];
-  });
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
 
-  // Synchronize simulation defaults & medical reports when currentClient changes
+  const medicalReports = useMemo(() => {
+    return currentClient ? currentClient.medicalReports || [] : [];
+  }, [currentClient]);
+
+  // Never keep client auth modal open once authenticated
+  useEffect(() => {
+    if (currentClient) {
+      setIsClientAuthModalOpen(false);
+    }
+  }, [currentClient]);
+
+  // Synchronize simulation defaults when currentClient changes
   useEffect(() => {
     if (currentClient) {
       setActiveSupplementIds(currentClient.activeSupplements || ['SUP-OMEGA3', 'SUP-MAGNESIO']);
       setSimulatedCalories(currentClient.biometrics.dailyCalories || 2200);
-      setMedicalReports(currentClient.medicalReports || []);
     } else {
       setActiveSupplementIds(['SUP-OMEGA3', 'SUP-MAGNESIO']);
       setSimulatedCalories(2200);
-      setMedicalReports([]);
     }
   }, [currentClient?.id]);
 
@@ -191,12 +202,12 @@ export default function App() {
   }, [clientSession]);
 
   // UI & Navigation State
-  const [activeView, setActiveView] = useState<'client' | 'admin'>('client');
+  const [activeView, setActiveView] = useState<'client' | 'admin'>(() =>
+    adminSession ? 'admin' : 'client'
+  );
   const [selectedCategory, setSelectedCategory] = useState<string>('Todos');
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [cart, setCart] = useState<CartItem[]>([
-    { product: INITIAL_PRODUCTS[0], quantity: 1 },
-  ]);
+  const [cart, setCart] = useState<CartItem[]>([]);
   const [isCartOpen, setIsCartOpen] = useState<boolean>(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
   const [authModalMode, setAuthModalMode] = useState<'login' | 'register'>('login');
@@ -397,6 +408,9 @@ export default function App() {
       )
     );
 
+    setClientSession(null);
+    setIsClientAuthModalOpen(false);
+    setIsMobileMenuOpen(false);
     setAdminSession(session);
     setIsAuthModalOpen(false);
     setActiveView('admin');
@@ -419,52 +433,19 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  // Client & Biometric Handlers
-  const handleUpdateClientBiometrics = (
-    clientId: string,
-    biometrics: ClientBiometrics,
-    goals: ClientHealthGoals,
-    updatedReports?: MedicalReportRecord[],
-    dateOfBirth?: string,
-    gender?: Gender
-  ) => {
-    setClients((prev) =>
-      prev.map((c) =>
-        c.id === clientId
-          ? {
-              ...c,
-              biometrics,
-              goals,
-              ...(updatedReports !== undefined ? { medicalReports: updatedReports } : {}),
-              ...(dateOfBirth !== undefined ? { dateOfBirth } : {}),
-              ...(gender !== undefined ? { gender } : {}),
-            }
-          : c
-      )
-    );
-    if (updatedReports !== undefined && currentClient?.id === clientId) {
-      setMedicalReports(updatedReports);
-    }
-    setSimulatedCalories(biometrics.dailyCalories);
-    void nutriApi.syncBiometricsToDb(clientId, biometrics, dateOfBirth, gender);
-  };
-
-  const handleUpdateClientGoals = (clientId: string, goals: ClientHealthGoals) => {
-    setClients((prev) =>
-      prev.map((c) => (c.id === clientId ? { ...c, goals } : c))
-    );
-    if (adminSession) {
-      void nutriApi.syncAdminGoalsToDb(clientId, goals, adminSession.userId);
-    }
+  // Client Auth Handlers
+  const handleOpenClientAuth = () => {
+    if (currentClient) return;
+    setIsClientAuthModalOpen(true);
   };
 
   const handleLoginClient = (session: ClientSession) => {
     setClientSession(session);
+    setIsClientAuthModalOpen(false);
     const matched = clients.find((c) => c.id === session.userId);
     if (matched) {
       setActiveSupplementIds(matched.activeSupplements || ['SUP-OMEGA3', 'SUP-MAGNESIO']);
       setSimulatedCalories(matched.biometrics.dailyCalories || 2200);
-      setMedicalReports(matched.medicalReports || []);
     }
   };
 
@@ -475,6 +456,8 @@ export default function App() {
 
   const handleLogoutClient = () => {
     setClientSession(null);
+    setIsClientAuthModalOpen(false);
+    setCart([]);
     try {
       localStorage.removeItem(STORAGE_KEYS.CLIENT_SESSION);
     } catch {
@@ -499,12 +482,17 @@ export default function App() {
     });
   };
 
-  // Medical Reports Handlers (AI Lab & Clinical Document Engine)
+  // Medical Reports Handlers (AI Lab & Clinical Document Engine — requires authenticated client)
   const handleUploadMedicalReport = (newReport: MedicalReportRecord) => {
-    const updatedReports = [newReport, ...medicalReports];
-    setMedicalReports(updatedReports);
+    if (!currentClient) {
+      setIsClientAuthModalOpen(true);
+      return;
+    }
 
-    if (!currentClient) return;
+    const nextWeight = newReport.detectedWeight ?? currentClient.biometrics.bodyWeight;
+    const nextHeight = newReport.detectedHeight ?? currentClient.biometrics.height ?? 170;
+    const nextWaist = newReport.detectedWaist ?? currentClient.biometrics.waistCircumference ?? 80;
+    const nextBmi = calculateBMI(nextWeight, nextHeight) || currentClient.biometrics.bodyMass;
 
     const updatedBiometrics: ClientBiometrics = {
       ...currentClient.biometrics,
@@ -517,8 +505,30 @@ export default function App() {
       ...(newReport.detectedHeartRate
         ? { heartRate: newReport.detectedHeartRate }
         : {}),
+      bodyWeight: nextWeight,
+      height: nextHeight,
+      waistCircumference: nextWaist,
+      bodyMass: nextBmi,
+      ...(newReport.markers.fattyLiverGrade !== undefined
+        ? { fattyLiverGrade: newReport.markers.fattyLiverGrade }
+        : {}),
       lastUpdated: new Date().toISOString().replace('T', ' ').substring(0, 16),
     };
+
+    // La IA calcula automáticamente metas orientativas seguras a partir del informe médico
+    const aiSuggestedGoals = calculateAiSuggestedGoals(
+      updatedBiometrics,
+      newReport,
+      calculateAge(currentClient.dateOfBirth),
+      currentClient.gender
+    );
+
+    const enrichedReport: MedicalReportRecord = {
+      ...newReport,
+      suggestedGoals: aiSuggestedGoals,
+    };
+
+    const updatedReports = [enrichedReport, ...(currentClient.medicalReports || [])];
 
     setClients((prev) =>
       prev.map((c) =>
@@ -526,20 +536,21 @@ export default function App() {
           ? {
             ...c,
             biometrics: updatedBiometrics,
+            goals: aiSuggestedGoals,
             medicalReports: updatedReports,
           }
           : c
       )
     );
-    void nutriApi.uploadReportToCloudDb(currentClient.id, newReport);
+    void nutriApi.uploadReportToCloudDb(currentClient.id, enrichedReport);
   };
 
   const handleDeleteMedicalReport = (reportId: string) => {
-    const updatedReports = medicalReports.filter((r) => r.id !== reportId);
-    setMedicalReports(updatedReports);
-
     if (!currentClient) return;
 
+    const updatedReports = (currentClient.medicalReports || []).filter(
+      (r) => r.id !== reportId
+    );
     setClients((prev) =>
       prev.map((c) =>
         c.id === currentClient.id
@@ -590,13 +601,14 @@ export default function App() {
     <div className="min-h-screen flex flex-col bg-[#F8FAFC] text-slate-900">
       {/* STRICT 3-ZONE TOP BAR CONTRACT */}
       <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-xs border-b border-slate-200/80">
-        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between gap-8">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-3 sm:gap-8">
           {/* Zone 1: Single text element brand wordmark */}
           <a
             href="#inicio"
             onClick={(e) => {
               e.preventDefault();
               setActiveView('client');
+              setIsMobileMenuOpen(false);
               window.scrollTo({ top: 0, behavior: 'smooth' });
             }}
             className="text-xl font-extrabold tracking-tight text-emerald-800 whitespace-nowrap shrink-0 font-display"
@@ -604,10 +616,10 @@ export default function App() {
             NutriVital
           </a>
 
-          {/* Zone 2: 4 concise single-line text navigation links */}
+          {/* Zone 2: Primary navigation links (always visible, plus Panel Administrador when logged in as admin) */}
           <nav
             aria-label="Navegación Principal"
-            className="hidden md:flex items-center gap-7 text-sm font-medium text-slate-600"
+            className="hidden md:flex items-center gap-6 lg:gap-7 text-sm font-medium text-slate-600"
           >
             <a
               href="#inicio"
@@ -616,8 +628,9 @@ export default function App() {
                 setActiveView('client');
                 window.scrollTo({ top: 0, behavior: 'smooth' });
               }}
-              className={`hover:text-emerald-700 transition-colors whitespace-nowrap shrink-0 ${activeView === 'client' ? 'text-emerald-700 font-semibold' : ''
-                }`}
+              className={`hover:text-emerald-700 transition-colors whitespace-nowrap shrink-0 ${
+                activeView === 'client' ? 'text-emerald-700 font-semibold' : ''
+              }`}
             >
               Inicio
             </a>
@@ -674,8 +687,9 @@ export default function App() {
                   setActiveView('admin');
                   window.scrollTo({ top: 0, behavior: 'smooth' });
                 }}
-                className={`hover:text-emerald-700 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${activeView === 'admin' ? 'text-emerald-700 font-semibold' : ''
-                  }`}
+                className={`hover:text-emerald-700 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
+                  activeView === 'admin' ? 'text-emerald-700 font-semibold' : ''
+                }`}
               >
                 <ShieldCheck className="w-4 h-4 text-emerald-600" />
                 <span>Panel Administrador</span>
@@ -683,98 +697,145 @@ export default function App() {
             )}
           </nav>
 
-          {/* Zone 3: Client Account access + Shopping Cart */}
-          <div className="flex items-center gap-3 shrink-0">
-            <button
-              type="button"
-              onClick={() => setIsClientAuthModalOpen(true)}
-              aria-label="Cuenta de cliente e inicio de sesión"
-              className="hidden sm:flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-800 transition-colors shadow-2xs"
-            >
-              <User className="w-3.5 h-3.5 text-emerald-700" />
-              <span className="truncate max-w-[110px]">
-                {currentClient ? currentClient.name.split(' ')[0] : 'Iniciar Sesión'}
-              </span>
-            </button>
+          {/* Zone 3: Active Account (Admin or Client) + Shopping Cart (Client only) + Mobile Menu */}
+          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+            {adminSession ? (
+              <div className="flex items-center gap-1.5 sm:gap-2">
+                <div
+                  aria-label={`Sesión administrativa de ${adminSession.name}`}
+                  className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3.5 py-2 text-xs font-semibold rounded-xl border border-emerald-200 bg-emerald-50/70 text-emerald-950 select-none"
+                >
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+                  <span className="truncate max-w-[110px] sm:max-w-[160px]">
+                    {adminSession.name}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleAdminLogout}
+                  aria-label="Cerrar sesión de administrador"
+                  title="Cerrar sesión"
+                  className="flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-xs font-semibold rounded-xl border border-red-200 bg-red-50/70 hover:bg-red-100 text-red-700 transition-colors whitespace-nowrap shrink-0"
+                >
+                  <LogOut className="w-3.5 h-3.5 shrink-0" />
+                  <span className="hidden sm:inline">Cerrar Sesión</span>
+                </button>
+              </div>
+            ) : (
+              <>
+                {currentClient ? (
+                  <div className="flex items-center gap-1.5 sm:gap-2">
+                    <div
+                      aria-label={`Sesión iniciada como ${currentClient.name}`}
+                      className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3.5 py-2 text-xs font-semibold rounded-xl border border-emerald-200 bg-emerald-50/70 text-emerald-950 select-none"
+                    >
+                      <User className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+                      <span className="truncate max-w-[82px] sm:max-w-[110px]">
+                        {currentClient.name.split(' ')[0]}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleLogoutClient}
+                      aria-label="Cerrar sesión de cliente"
+                      title="Cerrar sesión"
+                      className="flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-xs font-semibold rounded-xl border border-red-200 bg-red-50/70 hover:bg-red-100 text-red-700 transition-colors whitespace-nowrap shrink-0"
+                    >
+                      <LogOut className="w-3.5 h-3.5 shrink-0" />
+                      <span className="hidden sm:inline">Cerrar Sesión</span>
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleOpenClientAuth}
+                    aria-label="Cuenta de cliente e inicio de sesión"
+                    className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3.5 py-2 text-xs font-semibold rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-800 transition-colors shadow-2xs"
+                  >
+                    <User className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+                    <span className="truncate max-w-[92px] sm:max-w-[110px]">
+                      Iniciar Sesión
+                    </span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setIsCartOpen(true)}
+                  aria-label={`Abrir carrito de compras con ${cartSummary.totalItems} artículos`}
+                  className="px-3 sm:px-4 py-2 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded-xl transition-colors flex items-center gap-1.5 sm:gap-2 whitespace-nowrap shrink-0 shadow-2xs"
+                >
+                  <ShoppingCart className="w-4 h-4 text-[#86EFAC]" />
+                  <span className="hidden xs:inline sm:inline">Carrito</span>
+                  <span>({cartSummary.totalItems})</span>
+                </button>
+              </>
+            )}
 
             <button
               type="button"
-              onClick={() => setIsCartOpen(true)}
-              aria-label={`Abrir carrito de compras con ${cartSummary.totalItems} artículos`}
-              className="px-4 py-2 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded-xl transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 shadow-2xs"
+              onClick={() => setIsMobileMenuOpen((prev) => !prev)}
+              aria-label={isMobileMenuOpen ? 'Cerrar menú de navegación' : 'Abrir menú de navegación'}
+              aria-expanded={isMobileMenuOpen}
+              className="md:hidden p-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 transition-colors"
             >
-              <ShoppingCart className="w-4 h-4 text-[#86EFAC]" />
-              <span>Carrito ({cartSummary.totalItems})</span>
+              {isMobileMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
             </button>
           </div>
         </div>
+
+        {/* Mobile Navigation Dropdown */}
+        {isMobileMenuOpen && (
+          <nav
+            aria-label="Navegación Móvil"
+            className="md:hidden border-t border-slate-200/80 bg-white px-4 py-3 space-y-1 shadow-sm"
+          >
+            {[
+              { id: 'inicio', label: 'Inicio' },
+              { id: 'catalogo', label: 'Catálogo Saludable' },
+              { id: 'mi-salud', label: 'Mi Salud & Biometría' },
+              { id: 'progreso', label: 'Tu Progreso' },
+            ].map((item) => (
+              <a
+                key={item.id}
+                href={`#${item.id}`}
+                onClick={(e) => {
+                  e.preventDefault();
+                  setActiveView('client');
+                  setIsMobileMenuOpen(false);
+                  if (item.id === 'inicio') {
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  } else {
+                    setTimeout(() => {
+                      document
+                        .getElementById(item.id)
+                        ?.scrollIntoView({ behavior: 'smooth' });
+                    }, 40);
+                  }
+                }}
+                className="block px-3 py-2 rounded-xl text-sm font-medium text-slate-700 hover:bg-emerald-50 hover:text-emerald-800 transition-colors"
+              >
+                {item.label}
+              </a>
+            ))}
+            {adminSession && (
+              <a
+                href="#administrador"
+                onClick={(e) => {
+                  e.preventDefault();
+                  setActiveView('admin');
+                  setIsMobileMenuOpen(false);
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+                className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold text-emerald-800 bg-emerald-50"
+              >
+                <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                <span>Panel Administrador</span>
+              </a>
+            )}
+          </nav>
+        )}
       </header>
-
-      {/* Sub-header Workspace Bar */}
-      <div className="bg-[#F0FDF4] border-b border-emerald-100/90">
-        <div className="max-w-7xl mx-auto px-6 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs">
-          <div className="flex items-center gap-2 text-slate-600">
-            <span className="font-medium text-emerald-900">
-              Nutrición Celular & Biotecnología Botánica
-            </span>
-            <span aria-hidden="true">·</span>
-            <span>Envío Eco-Térmico gratis desde $90 USD</span>
-          </div>
-
-          {/* Admin controls: ONLY shown when an administrator is authenticated */}
-          {adminSession ? (
-            <div className="flex items-center gap-3">
-              <div className="hidden sm:flex items-center gap-2 px-2.5 py-1 rounded-xl bg-emerald-100/70 text-emerald-900 text-[11px] font-medium border border-emerald-200">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse" />
-                <span className="truncate max-w-[140px] font-semibold">{adminSession.name}</span>
-                <span className="text-emerald-700 font-normal">({adminSession.role})</span>
-              </div>
-
-              {/* Interactive View Switcher for logged-in Administrator */}
-              <div
-                role="group"
-                aria-label="Selector de vista de plataforma"
-                className="flex items-center gap-1 p-1 bg-white rounded-xl border border-emerald-200/80"
-              >
-                <button
-                  type="button"
-                  onClick={() => setActiveView('client')}
-                  className={`px-3 py-1 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 ${activeView === 'client'
-                      ? 'bg-emerald-600 text-white'
-                      : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                >
-                  Vista Cliente
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveView('admin')}
-                  className={`px-3 py-1 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 ${activeView === 'admin'
-                      ? 'bg-emerald-600 text-white'
-                      : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                >
-                  <ShieldCheck className="w-3.5 h-3.5" />
-                  <span>Panel Administrador</span>
-                </button>
-              </div>
-
-              <button
-                type="button"
-                onClick={handleAdminLogout}
-                aria-label="Cerrar sesión activa de administrador"
-                className="px-2.5 py-1 text-xs font-medium text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors whitespace-nowrap shrink-0"
-              >
-                Salir (Admin)
-              </button>
-            </div>
-          ) : (
-            <div className="hidden sm:flex items-center gap-2 text-slate-500 text-[11px]">
-              <span className="text-emerald-800 font-medium">Biotecnología & Nutrición Celular</span>
-            </div>
-          )}
-        </div>
-      </div>
 
       {/* MAIN CONTENT AREA */}
       <main className="flex-1">
@@ -785,8 +846,6 @@ export default function App() {
             products={products}
             salesHistory={salesHistory}
             recentOrders={recentOrders}
-            clients={clients}
-            onUpdateClientGoals={handleUpdateClientGoals}
             onAddProduct={handleAddProduct}
             onUpdateProduct={handleUpdateProduct}
             onDeleteProduct={handleDeleteProduct}
@@ -870,9 +929,8 @@ export default function App() {
                         className="h-56 rounded-xl"
                       />
                       <div className="space-y-2">
-                        <div className="flex items-center justify-between text-xs text-slate-500">
+                        <div className="flex items-center justify-between gap-2 text-xs text-slate-500">
                           <span>Fórmula Destacada del Mes</span>
-                          <span aria-hidden="true">·</span>
                           <span className="font-mono text-emerald-700 font-semibold">
                             25g Proteína / 6g Fibra
                           </span>
@@ -925,6 +983,8 @@ export default function App() {
                   <div className="relative w-full sm:w-72">
                     <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-2.5" />
                     <input
+                      id="catalog-search"
+                      name="catalogSearch"
                       type="search"
                       aria-label="Buscar productos por nombre o etiqueta"
                       value={searchQuery}
@@ -1084,13 +1144,7 @@ export default function App() {
             {/* HEALTH ANALYTICS, BIOMETRICS, LAB REPORTS & DYNAMIC GOALS CHART */}
             <HealthAnalyticsSection
               currentClient={currentClient}
-              onOpenProfileModal={() => {
-                if (currentClient) {
-                  setIsClientBiometricsModalOpen(true);
-                } else {
-                  setIsClientAuthModalOpen(true);
-                }
-              }}
+              onRequireLogin={handleOpenClientAuth}
               products={products}
               onAddToCart={handleAddToCart}
               activeSupplementIds={activeSupplementIds}
@@ -1104,14 +1158,19 @@ export default function App() {
               onDeleteMedicalReport={handleDeleteMedicalReport}
             />
 
-            {/* WELLNESS PROJECTION SIMULATOR (Module D) */}
-            <WellnessSimulator />
+            {/* WELLNESS PROJECTION SIMULATOR (Module D — Connected to real client metrics & protocol) */}
+            <WellnessSimulator
+              currentClient={currentClient}
+              activeSupplementIds={activeSupplementIds}
+              simulatedCalories={simulatedCalories}
+              medicalReports={medicalReports}
+            />
           </>
         )}
       </main>
 
       {/* CLEAN FOOTER */}
-      <footer className="bg-white border-t border-slate-200 py-10">
+      <footer className="bg-white border-t border-slate-200 pt-10 pb-24 sm:pb-14">
         <div className="max-w-7xl mx-auto px-6 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-500">
           <div>
             <span className="font-bold text-slate-900 font-display">
@@ -1137,9 +1196,11 @@ export default function App() {
               onClick={(e) => {
                 e.preventDefault();
                 setActiveView('client');
-                document
-                  .getElementById('catalogo')
-                  ?.scrollIntoView({ behavior: 'smooth' });
+                setTimeout(() => {
+                  document
+                    .getElementById('catalogo')
+                    ?.scrollIntoView({ behavior: 'smooth' });
+                }, 40);
               }}
               className="hover:text-slate-900"
             >
@@ -1150,9 +1211,11 @@ export default function App() {
               onClick={(e) => {
                 e.preventDefault();
                 setActiveView('client');
-                document
-                  .getElementById('progreso')
-                  ?.scrollIntoView({ behavior: 'smooth' });
+                setTimeout(() => {
+                  document
+                    .getElementById('progreso')
+                    ?.scrollIntoView({ behavior: 'smooth' });
+                }, 40);
               }}
               className="hover:text-slate-900"
             >
@@ -1202,9 +1265,9 @@ export default function App() {
         currentSession={adminSession}
       />
 
-      {/* CLIENT AUTHENTICATION MODAL (LOGIN & REGISTER - 100% CLEAN WITHOUT NUTRITIONAL DATA) */}
+      {/* CLIENT AUTHENTICATION MODAL (ONLY WHEN NOT LOGGED IN) */}
       <ClientAuthModal
-        isOpen={isClientAuthModalOpen}
+        isOpen={isClientAuthModalOpen && !currentClient}
         onClose={() => setIsClientAuthModalOpen(false)}
         currentClient={clientSession ? currentClient : null}
         allClients={clients}
@@ -1213,32 +1276,17 @@ export default function App() {
         onLogoutClient={handleLogoutClient}
       />
 
-      {/* CLIENT BIOMETRICS & HEALTH GOALS MODAL (OPENED STRICTLY FROM THE HEALTH/NUTRITION SECTION) */}
-      <ClientBiometricsModal
-        isOpen={isClientBiometricsModalOpen}
-        onClose={() => setIsClientBiometricsModalOpen(false)}
-        currentClient={currentClient ?? clients[0] ?? INITIAL_CLIENT_USERS[0]}
-        allClients={clients}
-        onUpdateBiometrics={handleUpdateClientBiometrics}
-        onSelectClient={(c) => {
-          handleLoginClient({
-            userId: c.id,
-            name: c.name,
-            email: c.email,
-            role: 'Cliente',
-            loggedInAt: new Date().toISOString(),
-          });
-        }}
-      />
-
-      {/* FLOATING NUTRIBOT VIRTUAL ASSISTANT (Module E) */}
-      <NutriBotWidget
-        currentClient={currentClient}
-        onSelectCategory={(cat: ProductCategory) => {
-          setActiveView('client');
-          setSelectedCategory(cat);
-        }}
-      />
+      {/* FLOATING NUTRIBOT VIRTUAL ASSISTANT (Module E — visible on storefront view) */}
+      {activeView === 'client' && (
+        <NutriBotWidget
+          currentClient={currentClient}
+          onSelectCategory={(cat: ProductCategory) => {
+            setActiveView('client');
+            setSearchQuery('');
+            setSelectedCategory(cat);
+          }}
+        />
+      )}
     </div>
   );
 }

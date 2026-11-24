@@ -111,6 +111,7 @@ export interface OrderReceipt {
 
 export type AdminRole =
   | 'Administrador General'
+  | 'Gestor de Catálogo'
   | 'Directora de Nutrición'
   | 'Director de Nutrición'
   | 'Director/a de Nutrición'
@@ -197,6 +198,10 @@ export interface MedicalReportRecord {
   detectedSystolicBP?: number;
   detectedDiastolicBP?: number;
   detectedHeartRate?: number;
+  detectedWeight?: number;
+  detectedHeight?: number;
+  detectedWaist?: number;
+  suggestedGoals?: ClientHealthGoals;
   filePath?: string;
 }
 
@@ -225,8 +230,10 @@ export interface ClientHealthGoals {
   targetBodyMass: number;
   targetCalories: number;
   timelineWeeks: number;
-  setByAdminId?: string; // Solo administradores pueden fijar metas
-  lastModifiedBy?: string;
+  source?: 'ai_report' | 'baseline_default';
+  aiRationale?: string;
+  generatedFromReportId?: string;
+  generatedAt?: string;
 }
 
 export interface ClientUser {

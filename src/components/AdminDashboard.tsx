@@ -13,14 +13,10 @@ import {
   Users,
   Check,
   X,
-  Target,
-  HeartPulse,
 } from 'lucide-react';
 import {
   AdminSession,
   AdminUser,
-  ClientHealthGoals,
-  ClientUser,
   IllustrationVariant,
   OrderReceipt,
   Product,
@@ -32,7 +28,6 @@ import {
   calculateOrdinaryLinearRegression,
   computeProductStatus,
 } from '../utils/analytics';
-import { calculateAge, getMedicalMetricRange } from '../utils/healthAnalytics';
 
 interface AdminDashboardProps {
   session: AdminSession;
@@ -40,8 +35,6 @@ interface AdminDashboardProps {
   products: Product[];
   salesHistory: SaleRecord[];
   recentOrders: OrderReceipt[];
-  clients?: ClientUser[];
-  onUpdateClientGoals?: (clientId: string, goals: ClientHealthGoals) => void;
   onAddProduct: (product: Product) => void;
   onUpdateProduct: (product: Product) => void;
   onDeleteProduct: (productId: string) => void;
@@ -57,8 +50,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   products,
   salesHistory,
   recentOrders,
-  clients = [],
-  onUpdateClientGoals,
   onAddProduct,
   onUpdateProduct,
   onDeleteProduct,
@@ -67,42 +58,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onLogout,
   onOpenRegisterAdmin,
 }) => {
-  const [editingGoalClient, setEditingGoalClient] = useState<ClientUser | null>(null);
-  const [goalSys, setGoalSys] = useState<number>(118);
-  const [goalDia, setGoalDia] = useState<number>(78);
-  const [goalHr, setGoalHr] = useState<number>(68);
-  const [goalWeight, setGoalWeight] = useState<number>(68);
-  const [goalMass, setGoalMass] = useState<number>(23);
-  const [goalCal, setGoalCal] = useState<number>(1950);
-  const [goalWeeks, setGoalWeeks] = useState<number>(8);
-
-  const handleOpenGoalModal = (client: ClientUser) => {
-    setEditingGoalClient(client);
-    setGoalSys(client.goals.targetSystolicBP);
-    setGoalDia(client.goals.targetDiastolicBP);
-    setGoalHr(client.goals.targetHeartRate);
-    setGoalWeight(client.goals.targetWeight);
-    setGoalMass(client.goals.targetBodyMass);
-    setGoalCal(client.goals.targetCalories);
-    setGoalWeeks(client.goals.timelineWeeks || 8);
-  };
-
-  const handleSaveClientGoals = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingGoalClient || !onUpdateClientGoals) return;
-    onUpdateClientGoals(editingGoalClient.id, {
-      targetSystolicBP: Number(goalSys),
-      targetDiastolicBP: Number(goalDia),
-      targetHeartRate: Number(goalHr),
-      targetWeight: Number(goalWeight),
-      targetBodyMass: Number(goalMass),
-      targetCalories: Number(goalCal),
-      timelineWeeks: Number(goalWeeks),
-      setByAdminId: session.userId,
-      lastModifiedBy: session.name,
-    });
-    setEditingGoalClient(null);
-  };
   const [regressionMetric, setRegressionMetric] = useState<'revenue' | 'units'>('revenue');
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
@@ -128,6 +83,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const regression = useMemo(
     () => calculateOrdinaryLinearRegression(salesHistory, regressionMetric, 2),
     [salesHistory, regressionMetric]
+  );
+
+  const revenueRegression = useMemo(
+    () => calculateOrdinaryLinearRegression(salesHistory, 'revenue', 2),
+    [salesHistory]
+  );
+
+  const unitsRegression = useMemo(
+    () => calculateOrdinaryLinearRegression(salesHistory, 'units', 2),
+    [salesHistory]
   );
 
   const totalRevenue = useMemo(
@@ -398,10 +363,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               <DollarSign className="w-4 h-4 text-emerald-600" />
             </div>
             <p className="mt-2 text-2xl font-bold text-slate-900 font-mono tabular-nums">
-              ${totalRevenue.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+              ${totalRevenue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </p>
             <p className="mt-1 text-xs text-emerald-700 font-mono tabular-nums">
-              Pendiente m = +${regression.slope.toFixed(2)} / sem
+              Pendiente m = {revenueRegression.slope >= 0 ? `+$${revenueRegression.slope.toFixed(2)}` : `-$${Math.abs(revenueRegression.slope).toFixed(2)}`} / sem
             </p>
           </div>
 
@@ -411,10 +376,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               <TrendingUp className="w-4 h-4 text-emerald-600" />
             </div>
             <p className="mt-2 text-2xl font-bold text-slate-900 font-mono tabular-nums">
-              {totalUnitsSold} uds
+              {totalUnitsSold.toLocaleString('en-US')} uds
             </p>
             <p className="mt-1 text-xs text-slate-500 font-mono tabular-nums">
-              Ajuste lineal R² = {regression.rSquared.toFixed(4)}
+              {regressionMetric === 'units'
+                ? `Pendiente m = ${unitsRegression.slope >= 0 ? `+${unitsRegression.slope.toFixed(2)}` : unitsRegression.slope.toFixed(2)} uds / sem`
+                : `Ajuste lineal R² = ${regression.rSquared.toFixed(4)}`}
             </p>
           </div>
 
@@ -438,8 +405,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </div>
             <p className="mt-2 text-2xl font-bold text-emerald-700 font-mono tabular-nums">
               {regressionMetric === 'revenue'
-                ? `$${regression.nextWeekPrediction.toFixed(2)}`
-                : `${regression.nextWeekPrediction.toFixed(0)} uds`}
+                ? `$${regression.nextWeekPrediction.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                : `${Math.round(regression.nextWeekPrediction).toLocaleString('en-US')} uds`}
             </p>
             <p className="mt-1 text-xs text-slate-500 font-mono tabular-nums">
               Evaluado en x = Semana {salesHistory.length + 1}
@@ -769,9 +736,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     </label>
                     <input
                       id="sim-rev-input"
+                      name="simRevenue"
                       type="number"
                       min={100}
-                      step={50}
+                      step={1}
                       value={simRevenue}
                       onChange={(e) => setSimRevenue(e.target.value)}
                       className="w-full px-3 py-1.5 text-xs font-mono rounded-lg border border-slate-200"
@@ -977,233 +945,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </table>
           </div>
         </section>
-
-        {/* Gestión Clínica de Pacientes & Metas (Solo Administrador) */}
-        {clients.length > 0 && (
-          <section className="bg-white rounded-2xl border border-slate-200/90 shadow-xs overflow-hidden">
-            <div className="p-6 border-b border-slate-100 flex flex-wrap items-center justify-between gap-4">
-              <div>
-                <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-                  <Target className="w-5 h-5 text-emerald-700" />
-                  <span>Gestión Clínica de Pacientes & Metas Terapéuticas</span>
-                </h2>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Exclusivo para especialistas: establece y calibra las metas de salud de cada paciente (los clientes tienen este módulo en modo solo lectura).
-                </p>
-              </div>
-              <span className="text-xs font-mono font-semibold text-emerald-800 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-200">
-                {clients.length} Pacientes Registrados
-              </span>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-slate-50/80 border-b border-slate-200 text-xs text-slate-500 font-semibold">
-                    <th className="py-3 px-4">Paciente</th>
-                    <th className="py-3 px-4">Edad / Género</th>
-                    <th className="py-3 px-4">Estado Actual</th>
-                    <th className="py-3 px-4">Metas Fijadas</th>
-                    <th className="py-3 px-4 text-right">Acciones</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-sm">
-                  {clients.map((client) => {
-                    const age = calculateAge(client.dateOfBirth);
-                    const sysR = getMedicalMetricRange('systolic', client.biometrics.systolicBP, age);
-                    const fattyR = getMedicalMetricRange('fattyLiver', client.biometrics.fattyLiverGrade ?? 0);
-
-                    return (
-                      <tr key={client.id} className="hover:bg-slate-50/80 transition-colors">
-                        <td className="py-3.5 px-4">
-                          <p className="font-bold text-slate-900">{client.name}</p>
-                          <p className="text-xs text-slate-500 font-mono">{client.email}</p>
-                        </td>
-                        <td className="py-3.5 px-4 text-xs">
-                          <div className="font-semibold text-slate-800">
-                            {age !== undefined ? `${age} años` : 'Edad N/D'}
-                          </div>
-                          <div className="text-slate-500">{client.gender || 'No especificado'}</div>
-                        </td>
-                        <td className="py-3.5 px-4 text-xs space-y-1">
-                          <div className="flex items-center gap-1.5 font-mono">
-                            <span className={`w-2 h-2 rounded-full ${sysR.dotClass}`} />
-                            <span>PA: {client.biometrics.systolicBP}/{client.biometrics.diastolicBP} mmHg</span>
-                            <span>·</span>
-                            <span>FC: {client.biometrics.heartRate} lpm</span>
-                          </div>
-                          <div className="flex items-center gap-1.5 font-mono">
-                            <span className={`w-2 h-2 rounded-full ${fattyR.dotClass}`} />
-                            <span>Peso: {client.biometrics.bodyWeight} kg</span>
-                            <span>·</span>
-                            <span>Hígado: G{client.biometrics.fattyLiverGrade ?? 0}</span>
-                          </div>
-                        </td>
-                        <td className="py-3.5 px-4 text-xs font-mono">
-                          <div className="text-emerald-800 font-semibold">
-                            PA Meta: {client.goals.targetSystolicBP}/{client.goals.targetDiastolicBP} · FC: {client.goals.targetHeartRate} lpm
-                          </div>
-                          <div className="text-slate-600">
-                            Peso: {client.goals.targetWeight} kg · {client.goals.targetCalories} kcal ({client.goals.timelineWeeks} sem)
-                          </div>
-                        </td>
-                        <td className="py-3.5 px-4 text-right">
-                          <button
-                            type="button"
-                            onClick={() => handleOpenGoalModal(client)}
-                            className="px-3 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-600 text-emerald-800 hover:text-white border border-emerald-200 text-xs font-bold transition-colors inline-flex items-center gap-1.5"
-                          >
-                            <HeartPulse className="w-3.5 h-3.5" />
-                            <span>Calibrar Metas</span>
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        )}
-
-        {/* Modal de Edición de Metas por Administrador */}
-        {editingGoalClient && (
-          <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4"
-            role="dialog"
-            aria-modal="true"
-            onClick={() => setEditingGoalClient(null)}
-          >
-            <div
-              className="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-xl w-full overflow-hidden"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="px-6 py-4 bg-gradient-to-r from-emerald-800 to-teal-800 text-white flex items-center justify-between">
-                <div>
-                  <h3 className="text-base font-bold">
-                    Calibrar Metas Clínicas: {editingGoalClient.name}
-                  </h3>
-                  <p className="text-xs text-emerald-100">
-                    Autorizado por: {session.name} ({session.role})
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setEditingGoalClient(null)}
-                  className="p-1.5 rounded-xl text-emerald-200 hover:text-white hover:bg-white/10"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-
-              <form onSubmit={handleSaveClientGoals} className="p-6 space-y-4">
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                  <div className="space-y-1">
-                    <label className="block text-xs font-semibold text-slate-700">Meta Sistólica (mmHg)</label>
-                    <input
-                      type="number"
-                      min={90}
-                      max={160}
-                      value={goalSys}
-                      onChange={(e) => setGoalSys(Number(e.target.value))}
-                      className="w-full px-3 py-1.5 text-sm font-mono font-bold rounded-lg border border-slate-200 focus:outline-none focus:border-emerald-600"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="block text-xs font-semibold text-slate-700">Meta Diastólica (mmHg)</label>
-                    <input
-                      type="number"
-                      min={55}
-                      max={100}
-                      value={goalDia}
-                      onChange={(e) => setGoalDia(Number(e.target.value))}
-                      className="w-full px-3 py-1.5 text-sm font-mono font-bold rounded-lg border border-slate-200 focus:outline-none focus:border-emerald-600"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="block text-xs font-semibold text-slate-700">Meta Pulsaciones (lpm)</label>
-                    <input
-                      type="number"
-                      min={50}
-                      max={100}
-                      value={goalHr}
-                      onChange={(e) => setGoalHr(Number(e.target.value))}
-                      className="w-full px-3 py-1.5 text-sm font-mono font-bold rounded-lg border border-slate-200 focus:outline-none focus:border-emerald-600"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="block text-xs font-semibold text-slate-700">Meta Peso (kg)</label>
-                    <input
-                      type="number"
-                      step="0.5"
-                      min={40}
-                      max={180}
-                      value={goalWeight}
-                      onChange={(e) => setGoalWeight(Number(e.target.value))}
-                      className="w-full px-3 py-1.5 text-sm font-mono font-bold rounded-lg border border-slate-200 focus:outline-none focus:border-emerald-600"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="block text-xs font-semibold text-slate-700">Meta IMC (kg/m²)</label>
-                    <input
-                      type="number"
-                      step="0.1"
-                      min={17}
-                      max={35}
-                      value={goalMass}
-                      onChange={(e) => setGoalMass(Number(e.target.value))}
-                      className="w-full px-3 py-1.5 text-sm font-mono font-bold rounded-lg border border-slate-200 focus:outline-none focus:border-emerald-600"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="block text-xs font-semibold text-slate-700">Meta Calórica (kcal)</label>
-                    <input
-                      type="number"
-                      step="50"
-                      min={1200}
-                      max={4000}
-                      value={goalCal}
-                      onChange={(e) => setGoalCal(Number(e.target.value))}
-                      className="w-full px-3 py-1.5 text-sm font-mono font-bold rounded-lg border border-slate-200 focus:outline-none focus:border-emerald-600"
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-1 pt-2">
-                  <div className="flex justify-between text-xs font-semibold text-slate-700">
-                    <span>Horizonte Clínico de Seguimiento</span>
-                    <span className="font-mono text-emerald-700 font-bold">{goalWeeks} semanas</span>
-                  </div>
-                  <input
-                    type="range"
-                    min={4}
-                    max={16}
-                    step={2}
-                    value={goalWeeks}
-                    onChange={(e) => setGoalWeeks(Number(e.target.value))}
-                    className="w-full h-2 bg-emerald-200 rounded-lg appearance-none cursor-pointer accent-emerald-600"
-                  />
-                </div>
-
-                <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
-                  <button
-                    type="button"
-                    onClick={() => setEditingGoalClient(null)}
-                    className="px-4 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50"
-                  >
-                    Cancelar
-                  </button>
-                  <button
-                    type="submit"
-                    className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs"
-                  >
-                    Guardar Metas Clínicas
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        )}
 
         {/* Recent Transactions Log */}
         {recentOrders.length > 0 && (

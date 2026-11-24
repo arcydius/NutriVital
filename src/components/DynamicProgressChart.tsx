@@ -23,6 +23,7 @@ import {
 } from '../types/nutrivital';
 import {
   calculateSeriesLinearRegression,
+  getBloodPressureCategory,
   getMedicalMetricRange,
 } from '../utils/healthAnalytics';
 
@@ -52,6 +53,7 @@ interface DynamicProgressChartProps {
   onToggleSupplement?: (suppId: string) => void;
   availableSupplements?: SupplementItem[];
   medicalReports?: MedicalReportRecord[];
+  clientAge?: number;
 }
 
 export const DynamicProgressChart: React.FC<DynamicProgressChartProps> = ({
@@ -69,6 +71,7 @@ export const DynamicProgressChart: React.FC<DynamicProgressChartProps> = ({
   onToggleSupplement,
   availableSupplements = [],
   medicalReports = [],
+  clientAge,
 }) => {
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
   const [showRegression, setShowRegression] = useState<boolean>(true);
@@ -253,25 +256,55 @@ export const DynamicProgressChart: React.FC<DynamicProgressChartProps> = ({
   const calorieDiffFromTarget = simulatedCalories - targetCalories;
   const activeSet = new Set(activeSupplementIds);
 
-  // Suplementos únicos recomendados por la IA para acceso rápido dentro de la gráfica
-  const aiQuickSupplements = recommendations
-    .map((rec) =>
-      availableSupplements.find(
-        (s) =>
-          (rec.relatedSupplementId && s.id === rec.relatedSupplementId) ||
-          (rec.relatedProductId && s.matchingProductId === rec.relatedProductId)
-      )
-    )
-    .filter(
-      (supp, idx, arr): supp is SupplementItem =>
-        Boolean(supp) && arr.findIndex((x) => x?.id === supp?.id) === idx
-    )
-    .slice(0, 3);
+  // Separamos suplementos funcionales del catálogo vs factores de hábito/riesgo para control transparente
+  const catalogSupplements = availableSupplements.filter(
+    (s) => s.matchingProductId || s.id === 'SUP-OMEGA3' || s.id === 'SUP-MAGNESIO' || s.id === 'SUP-ASHWAGANDHA' || s.id === 'SUP-MATCHA' || s.id === 'SUP-ESPIRULINA' || s.id === 'SUP-COLAGENO'
+  );
+  const lifestyleFactors = availableSupplements.filter(
+    (s) => s.id === 'SUP-CAFE' || s.id === 'SUP-SAL'
+  );
+
+  const getVitalityRange = (score: number) => {
+    if (score >= 80) {
+      return {
+        status: 'normal' as const,
+        label: 'Óptimo (≥80)',
+        badgeClass: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+        textClass: 'text-emerald-700',
+        dotClass: 'bg-emerald-500',
+      };
+    }
+    if (score >= 60) {
+      return {
+        status: 'borderline' as const,
+        label: 'Moderado (60-79)',
+        badgeClass: 'bg-amber-50 text-amber-800 border-amber-200',
+        textClass: 'text-amber-700',
+        dotClass: 'bg-amber-500',
+      };
+    }
+    return {
+      status: 'critical' as const,
+      label: 'Mejorable (<60)',
+      badgeClass: 'bg-rose-50 text-rose-800 border-rose-200',
+      textClass: 'text-rose-700',
+      dotClass: 'bg-rose-500',
+    };
+  };
+
+  const getEffectBadge = (supp: SupplementItem) => {
+    if (supp.id === 'SUP-SAL') return '+6 mmHg PA';
+    if (supp.id === 'SUP-CAFE') return '+6 lpm · -80 kcal';
+    if (supp.caloricBurnBonus) return `-${supp.caloricBurnBonus} kcal/d`;
+    if (supp.heartRateEffect <= -4) return `${supp.heartRateEffect} lpm`;
+    if (supp.systolicEffect < 0) return `${supp.systolicEffect} mmHg`;
+    return `+${supp.vitalityScoreBonus} vit`;
+  };
 
   return (
     <div className="bg-white rounded-3xl border border-slate-200/90 p-5 sm:p-6 shadow-sm space-y-5">
       {/* Encabezado y Selector de Curvas */}
-      <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-3">
+      <div className="flex flex-col gap-3">
         <div>
           <div className="flex flex-wrap items-center gap-2">
             <span className="inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200/80">
@@ -283,7 +316,8 @@ export const DynamicProgressChart: React.FC<DynamicProgressChartProps> = ({
               <span>Proyección a {timelineWeeks} semanas</span>
             </span>
             <span className="text-[11px] font-mono text-slate-500">
-              {activeSupplementIds.length} suplementos activos
+              {activeSupplementIds.length}{' '}
+              {activeSupplementIds.length === 1 ? 'suplemento activo' : 'suplementos activos'}
             </span>
             {medicalReports.length > 0 && (
               <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-teal-800 bg-teal-50 px-2 py-0.5 rounded-full border border-teal-200">
@@ -298,7 +332,7 @@ export const DynamicProgressChart: React.FC<DynamicProgressChartProps> = ({
         </div>
 
         {/* Pestañas de Métricas */}
-        <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-2xl overflow-x-auto">
+        <div className="flex flex-wrap items-center gap-1 bg-slate-100 p-1 rounded-2xl">
           {tabs.map((tab) => {
             const active = selectedMetric === tab.id;
             return (
@@ -306,7 +340,7 @@ export const DynamicProgressChart: React.FC<DynamicProgressChartProps> = ({
                 key={tab.id}
                 type="button"
                 onClick={() => onSelectMetric(tab.id)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 whitespace-nowrap ${active
+                className={`px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 whitespace-nowrap ${active
                     ? 'bg-emerald-700 text-white shadow-2xs'
                     : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
                   }`}
@@ -321,27 +355,44 @@ export const DynamicProgressChart: React.FC<DynamicProgressChartProps> = ({
 
       {/* Lectura Instantánea: Inicial vs Punto Inspeccionado vs Meta con Indicadores de Color */}
       {inspectedPoint && initialPoint && finalPoint && (() => {
+        const initBpCat = getBloodPressureCategory(
+          Math.round(initialPoint.systolicBP),
+          Math.round(initialPoint.diastolicBP),
+          clientAge
+        );
+        const inspBpCat = getBloodPressureCategory(
+          Math.round(inspectedPoint.systolicBP),
+          Math.round(inspectedPoint.diastolicBP),
+          clientAge
+        );
+
         const initRange =
           selectedMetric === 'presion'
-            ? getMedicalMetricRange('systolic', initialPoint.systolicBP)
+            ? {
+                ...getMedicalMetricRange('systolic', initialPoint.systolicBP, clientAge),
+                label: initBpCat,
+              }
             : selectedMetric === 'pulsaciones'
               ? getMedicalMetricRange('heartRate', initialPoint.heartRate)
               : selectedMetric === 'peso_masa'
                 ? getMedicalMetricRange('bmi', initialPoint.bodyMass)
                 : selectedMetric === 'higado_graso'
-                  ? getMedicalMetricRange('fattyLiver', Math.min(3, Math.floor((initialPoint.fattyLiverScore ?? 0) / 30)))
-                  : { status: 'normal', label: 'Óptimo', badgeClass: 'bg-emerald-50 text-emerald-800 border-emerald-200', textClass: 'text-emerald-700', dotClass: 'bg-emerald-500' };
+                  ? getMedicalMetricRange('fattyLiver', Math.min(3, Math.floor((initialPoint.fattyLiverScore ?? 0) / 28)))
+                  : getVitalityRange(initialPoint.generalHealthScore);
 
         const inspRange =
           selectedMetric === 'presion'
-            ? getMedicalMetricRange('systolic', inspectedPoint.systolicBP)
+            ? {
+                ...getMedicalMetricRange('systolic', inspectedPoint.systolicBP, clientAge),
+                label: inspBpCat,
+              }
             : selectedMetric === 'pulsaciones'
               ? getMedicalMetricRange('heartRate', inspectedPoint.heartRate)
               : selectedMetric === 'peso_masa'
                 ? getMedicalMetricRange('bmi', inspectedPoint.bodyMass)
                 : selectedMetric === 'higado_graso'
-                  ? getMedicalMetricRange('fattyLiver', Math.min(3, Math.floor((inspectedPoint.fattyLiverScore ?? 0) / 30)))
-                  : { status: 'normal', label: 'Óptimo', badgeClass: 'bg-emerald-50 text-emerald-800 border-emerald-200', textClass: 'text-emerald-700', dotClass: 'bg-emerald-500' };
+                  ? getMedicalMetricRange('fattyLiver', Math.min(3, Math.floor((inspectedPoint.fattyLiverScore ?? 0) / 28)))
+                  : getVitalityRange(inspectedPoint.generalHealthScore);
 
         return (
           <div className="grid grid-cols-3 gap-2.5 bg-slate-50/90 rounded-2xl p-3 border border-slate-200/70 text-xs">
@@ -388,7 +439,7 @@ export const DynamicProgressChart: React.FC<DynamicProgressChartProps> = ({
 
             <div className="text-right">
               <span className="text-[10px] font-semibold uppercase text-slate-400 block mb-0.5">
-                Meta Clínica
+                Meta Sugerida (IA)
               </span>
               <span className="font-mono font-bold text-slate-900 text-sm">
                 {selectedMetric === 'presion' &&
@@ -396,10 +447,10 @@ export const DynamicProgressChart: React.FC<DynamicProgressChartProps> = ({
                 {selectedMetric === 'pulsaciones' && `${initialPoint.targetHeartRate} lpm`}
                 {selectedMetric === 'peso_masa' && `${initialPoint.targetWeight} kg`}
                 {selectedMetric === 'vitalidad' && `≥ 85/100`}
-                {selectedMetric === 'higado_graso' && `≤ 10% (G0)`}
+                {selectedMetric === 'higado_graso' && `≤ 15% (Bajo)`}
               </span>
               <p className="text-[10px] font-semibold text-emerald-700 mt-0.5">
-                Rango Saludable
+                Orientativa · No médica
               </p>
             </div>
           </div>
@@ -505,7 +556,7 @@ export const DynamicProgressChart: React.FC<DynamicProgressChartProps> = ({
             );
           })}
 
-          {/* Línea de Meta Clínica */}
+          {/* Línea de Meta Sugerida IA (etiqueta a la izquierda con fondo para evitar solapamiento) */}
           {chart.targetValue >= chart.minY && chart.targetValue <= chart.maxY && (
             <g className="transition-all duration-300">
               <line
@@ -517,13 +568,22 @@ export const DynamicProgressChart: React.FC<DynamicProgressChartProps> = ({
                 strokeWidth="1.75"
                 strokeDasharray="6 4"
               />
+              <rect
+                x={padLeft + 4}
+                y={getY(chart.targetValue) - 16}
+                width={136}
+                height={14}
+                rx={4}
+                fill="#ffffff"
+                fillOpacity="0.92"
+              />
               <text
-                x={width - padRight}
+                x={padLeft + 8}
                 y={getY(chart.targetValue) - 6}
-                textAnchor="end"
-                className="fill-emerald-700 text-[10px] font-bold font-mono"
+                textAnchor="start"
+                className="fill-emerald-700 text-[9.5px] font-bold font-mono"
               >
-                Meta ({chart.targetValue} {chart.unit})
+                Meta IA ({chart.targetValue} {chart.unit})
               </text>
             </g>
           )}
@@ -652,6 +712,7 @@ export const DynamicProgressChart: React.FC<DynamicProgressChartProps> = ({
                   {selectedMetric === 'pulsaciones' && `${Math.round(pt.heartRate)}`}
                   {selectedMetric === 'peso_masa' && `${pt.bodyWeight}`}
                   {selectedMetric === 'vitalidad' && `${pt.generalHealthScore}`}
+                  {selectedMetric === 'higado_graso' && `${pt.fattyLiverScore ?? 0}%`}
                 </text>
 
                 {/* Etiqueta Semana */}
@@ -690,7 +751,7 @@ export const DynamicProgressChart: React.FC<DynamicProgressChartProps> = ({
             )}
             <span className="flex items-center gap-1.5 font-medium text-emerald-700">
               <span className="w-3 border-t-2 border-dashed border-emerald-500 inline-block" />
-              Meta Clínica
+              Meta Sugerida IA
             </span>
           </div>
           <span className="text-[10px] text-slate-400">
@@ -741,6 +802,8 @@ export const DynamicProgressChart: React.FC<DynamicProgressChartProps> = ({
         </div>
 
         <input
+          id="simulated-calories-slider"
+          name="simulatedCalories"
           type="range"
           min={1200}
           max={3600}
@@ -751,35 +814,77 @@ export const DynamicProgressChart: React.FC<DynamicProgressChartProps> = ({
           className="w-full accent-emerald-700 cursor-pointer h-2 bg-emerald-200/80 rounded-lg"
         />
 
-        {/* Píldoras de Simulación Rápida IA para ver el efecto directo en la curva */}
-        {aiQuickSupplements.length > 0 && onToggleSupplement && (
-          <div className="pt-2 border-t border-emerald-200/70 flex flex-wrap items-center gap-1.5">
-            <span className="text-[11px] font-bold text-emerald-900 flex items-center gap-1 mr-1">
-              <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Simular sugerencia IA:</span>
-            </span>
+        {/* Selector Transparente de Suplementos y Factores Simulados (Control Real de la Curva) */}
+        {onToggleSupplement && catalogSupplements.length > 0 && (
+          <div className="pt-3 border-t border-emerald-200/70 space-y-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] font-bold text-emerald-950 flex items-center gap-1">
+                <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Protocolo simulado en la gráfica (activa o desactiva para ver impacto):</span>
+              </span>
+            </div>
 
-            {aiQuickSupplements.map((supp) => {
-              const isSimulated = activeSet.has(supp.id);
-              return (
-                <button
-                  key={supp.id}
-                  type="button"
-                  onClick={() => onToggleSupplement(supp.id)}
-                  className={`px-2.5 py-1 rounded-xl text-[11px] font-bold transition-all flex items-center gap-1 ${isSimulated
-                      ? 'bg-emerald-700 text-white shadow-2xs'
-                      : 'bg-white hover:bg-emerald-100/80 text-emerald-900 border border-emerald-300/80'
-                    }`}
-                >
-                  {isSimulated ? (
-                    <Check className="w-3 h-3" />
-                  ) : (
-                    <Sparkles className="w-3 h-3 text-emerald-600" />
-                  )}
-                  <span>{supp.name.split(' ').slice(0, 2).join(' ')}</span>
-                </button>
-              );
-            })}
+            <div className="flex flex-wrap gap-1.5">
+              {catalogSupplements.map((supp) => {
+                const isSimulated = activeSet.has(supp.id);
+                return (
+                  <button
+                    key={supp.id}
+                    type="button"
+                    onClick={() => onToggleSupplement(supp.id)}
+                    title={`${supp.name} (${supp.dailyDose}) — ${supp.description}`}
+                    className={`px-2.5 py-1.5 rounded-xl text-[11px] font-semibold transition-all flex items-center gap-1.5 border ${isSimulated
+                        ? 'bg-emerald-700 text-white border-emerald-700 shadow-2xs'
+                        : 'bg-white hover:bg-emerald-100/70 text-slate-700 border-emerald-200/90'
+                      }`}
+                  >
+                    {isSimulated && <Check className="w-3 h-3 shrink-0" />}
+                    <span>{supp.name.split(' ').slice(0, 2).join(' ')}</span>
+                    <span
+                      className={`text-[10px] font-mono px-1.5 py-0.5 rounded-md ${isSimulated
+                          ? 'bg-emerald-800/80 text-emerald-100'
+                          : 'bg-emerald-50 text-emerald-800'
+                        }`}
+                    >
+                      {getEffectBadge(supp)}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {lifestyleFactors.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 mr-1">
+                  Simular hábitos de riesgo:
+                </span>
+                {lifestyleFactors.map((factor) => {
+                  const isSimulated = activeSet.has(factor.id);
+                  return (
+                    <button
+                      key={factor.id}
+                      type="button"
+                      onClick={() => onToggleSupplement(factor.id)}
+                      title={factor.description}
+                      className={`px-2.5 py-1 rounded-xl text-[11px] font-semibold transition-all flex items-center gap-1.5 border ${isSimulated
+                          ? 'bg-amber-600 text-white border-amber-600 shadow-2xs'
+                          : 'bg-white hover:bg-amber-50 text-slate-700 border-slate-200'
+                        }`}
+                    >
+                      <span>{factor.id === 'SUP-SAL' ? 'Exceso de Sal (>5g)' : 'Café Funcional'}</span>
+                      <span
+                        className={`text-[10px] font-mono px-1.5 py-0.5 rounded-md ${isSimulated
+                            ? 'bg-amber-700 text-amber-50'
+                            : 'bg-amber-50 text-amber-800'
+                          }`}
+                      >
+                        {getEffectBadge(factor)}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
       </div>

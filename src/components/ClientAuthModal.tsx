@@ -14,6 +14,7 @@ import {
   ClientUser,
   Gender,
 } from '../types/nutrivital';
+import { INITIAL_CLIENT_USERS } from '../data/seedData';
 
 interface ClientAuthModalProps {
   isOpen: boolean;
@@ -57,7 +58,20 @@ export const ClientAuthModal: React.FC<ClientAuthModalProps> = ({
     setActiveTab(initialMode);
     setLoginError(null);
     setRegError(null);
+    setLoginEmail('');
+    setLoginPassword('');
+    setShowLoginPassword(false);
+    setRegName('');
+    setRegEmail('');
+    setRegPassword('');
+    setRegDob('');
+    setRegGender('Femenino');
+    setShowRegPassword(false);
   }, [initialMode, isOpen]);
+
+  const demoClientIds = new Set(INITIAL_CLIENT_USERS.map((c) => c.id));
+  const demoClients = allClients.filter((c) => demoClientIds.has(c.id));
+  const todayIso = new Date().toISOString().split('T')[0];
 
   // Keyboard navigation & body scroll lock
   useEffect(() => {
@@ -79,7 +93,7 @@ export const ClientAuthModal: React.FC<ClientAuthModalProps> = ({
     };
   }, [isOpen, onClose]);
 
-  if (!isOpen) return null;
+  if (!isOpen || currentClient) return null;
 
   const handleLoginSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -120,6 +134,11 @@ export const ClientAuthModal: React.FC<ClientAuthModalProps> = ({
       return;
     }
 
+    if (regPassword.trim().length < 6) {
+      setRegError('La contraseña debe tener al menos 6 caracteres.');
+      return;
+    }
+
     const emailNorm = regEmail.trim().toLowerCase();
     if (allClients.some((c) => c.email.toLowerCase() === emailNorm)) {
       setRegError('Ya existe una cuenta registrada con este correo.');
@@ -127,21 +146,24 @@ export const ClientAuthModal: React.FC<ClientAuthModalProps> = ({
     }
 
     const newId = `CLI-${String(allClients.length + 1).padStart(2, '0')}`;
+    const normalizedDob = regDob.trim() || undefined;
     const newClient: ClientUser = {
       id: newId,
       name: regName.trim(),
       email: emailNorm,
-      password: regPassword.trim() || 'Cliente2026!',
+      password: regPassword.trim(),
       role: 'Cliente',
       createdAt: new Date().toISOString().split('T')[0],
-      dateOfBirth: regDob || undefined,
+      dateOfBirth: normalizedDob,
       gender: regGender,
       biometrics: {
         systolicBP: 120,
         diastolicBP: 80,
         heartRate: 72,
         bodyWeight: 70,
-        bodyMass: 23.5,
+        height: 170,
+        waistCircumference: 80,
+        bodyMass: 24.2,
         dailyCalories: 2100,
         fattyLiverGrade: 0,
         lastUpdated: new Date().toISOString().replace('T', ' ').substring(0, 16),
@@ -151,10 +173,12 @@ export const ClientAuthModal: React.FC<ClientAuthModalProps> = ({
         targetDiastolicBP: 78,
         targetHeartRate: 68,
         targetWeight: 68,
-        targetBodyMass: 22.5,
+        targetBodyMass: 23.5,
         targetCalories: 1950,
         timelineWeeks: 8,
-        setByAdminId: 'ADM-01',
+        source: 'baseline_default',
+        aiRationale:
+          'Referencia inicial orientativa. Sube un informe médico para que la IA calcule tus metas sugeridas según tus biomarcadores reales.',
       },
       activeSupplements: ['SUP-OMEGA3'],
     };
@@ -193,9 +217,7 @@ export const ClientAuthModal: React.FC<ClientAuthModalProps> = ({
                 Acceso de Clientes
               </h2>
               <p className="text-xs text-emerald-100">
-                {currentClient
-                  ? `Sesión activa: ${currentClient.name}`
-                  : 'Inicia sesión para gestionar tus pedidos'}
+                Inicia sesión para gestionar tus pedidos e informes médicos
               </p>
             </div>
           </div>
@@ -238,19 +260,6 @@ export const ClientAuthModal: React.FC<ClientAuthModalProps> = ({
               <span>Crear Cuenta</span>
             </button>
           </div>
-
-          {currentClient && (
-            <button
-              type="button"
-              onClick={() => {
-                onLogoutClient();
-                setActiveTab('login');
-              }}
-              className="text-xs text-red-600 hover:text-red-700 font-medium px-2 py-1"
-            >
-              Cerrar sesión
-            </button>
-          )}
         </div>
 
         {/* Form Body */}
@@ -271,14 +280,20 @@ export const ClientAuthModal: React.FC<ClientAuthModalProps> = ({
               )}
 
               <div className="space-y-1">
-                <label className="block text-xs font-semibold text-slate-700">
+                <label
+                  htmlFor="client-login-email"
+                  className="block text-xs font-semibold text-slate-700"
+                >
                   Correo Electrónico
                 </label>
                 <div className="relative">
                   <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
                   <input
+                    id="client-login-email"
+                    name="email"
                     type="email"
                     required
+                    autoComplete="email"
                     value={loginEmail}
                     onChange={(e) => setLoginEmail(e.target.value)}
                     placeholder="laura.morales@nutrivital.com"
@@ -288,12 +303,20 @@ export const ClientAuthModal: React.FC<ClientAuthModalProps> = ({
               </div>
 
               <div className="space-y-1">
-                <label className="block text-xs font-semibold text-slate-700">Contraseña</label>
+                <label
+                  htmlFor="client-login-password"
+                  className="block text-xs font-semibold text-slate-700"
+                >
+                  Contraseña
+                </label>
                 <div className="relative">
                   <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
                   <input
+                    id="client-login-password"
+                    name="password"
                     type={showLoginPassword ? 'text' : 'password'}
                     required
+                    autoComplete="current-password"
                     value={loginPassword}
                     onChange={(e) => setLoginPassword(e.target.value)}
                     placeholder="••••••••"
@@ -302,6 +325,7 @@ export const ClientAuthModal: React.FC<ClientAuthModalProps> = ({
                   <button
                     type="button"
                     onClick={() => setShowLoginPassword(!showLoginPassword)}
+                    aria-label={showLoginPassword ? 'Ocultar contraseña' : 'Ver contraseña'}
                     className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600"
                   >
                     {showLoginPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -319,7 +343,7 @@ export const ClientAuthModal: React.FC<ClientAuthModalProps> = ({
               <div className="pt-4 border-t border-slate-100 text-center">
                 <p className="text-xs text-slate-500 mb-2">Cuentas demo de prueba:</p>
                 <div className="flex flex-wrap justify-center gap-2">
-                  {allClients.map((c) => (
+                  {demoClients.map((c) => (
                     <button
                       key={c.id}
                       type="button"
@@ -351,12 +375,20 @@ export const ClientAuthModal: React.FC<ClientAuthModalProps> = ({
               )}
 
               <div className="space-y-1">
-                <label className="block text-xs font-semibold text-slate-700">Nombre Completo</label>
+                <label
+                  htmlFor="client-reg-name"
+                  className="block text-xs font-semibold text-slate-700"
+                >
+                  Nombre Completo
+                </label>
                 <div className="relative">
                   <User className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
                   <input
+                    id="client-reg-name"
+                    name="name"
                     type="text"
                     required
+                    autoComplete="name"
                     value={regName}
                     onChange={(e) => setRegName(e.target.value)}
                     placeholder="Ej. Andrés Ramírez"
@@ -366,12 +398,20 @@ export const ClientAuthModal: React.FC<ClientAuthModalProps> = ({
               </div>
 
               <div className="space-y-1">
-                <label className="block text-xs font-semibold text-slate-700">Correo Electrónico</label>
+                <label
+                  htmlFor="client-reg-email"
+                  className="block text-xs font-semibold text-slate-700"
+                >
+                  Correo Electrónico
+                </label>
                 <div className="relative">
                   <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
                   <input
+                    id="client-reg-email"
+                    name="email"
                     type="email"
                     required
+                    autoComplete="email"
                     value={regEmail}
                     onChange={(e) => setRegEmail(e.target.value)}
                     placeholder="andres@ejemplo.com"
@@ -382,17 +422,34 @@ export const ClientAuthModal: React.FC<ClientAuthModalProps> = ({
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <label className="block text-xs font-semibold text-slate-700">Fecha de Nacimiento</label>
+                  <label
+                    htmlFor="client-reg-dob"
+                    className="block text-xs font-semibold text-slate-700"
+                  >
+                    Fecha de Nacimiento
+                  </label>
                   <input
+                    id="client-reg-dob"
+                    name="dateOfBirth"
                     type="date"
+                    max={todayIso}
+                    autoComplete="bday"
                     value={regDob}
                     onChange={(e) => setRegDob(e.target.value)}
+                    onInput={(e) => setRegDob((e.target as HTMLInputElement).value)}
                     className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 focus:outline-none focus:border-emerald-600 bg-white"
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="block text-xs font-semibold text-slate-700">Género</label>
+                  <label
+                    htmlFor="client-reg-gender"
+                    className="block text-xs font-semibold text-slate-700"
+                  >
+                    Género
+                  </label>
                   <select
+                    id="client-reg-gender"
+                    name="gender"
                     value={regGender}
                     onChange={(e) => setRegGender(e.target.value as Gender)}
                     className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 focus:outline-none focus:border-emerald-600 bg-white"
@@ -405,12 +462,21 @@ export const ClientAuthModal: React.FC<ClientAuthModalProps> = ({
               </div>
 
               <div className="space-y-1">
-                <label className="block text-xs font-semibold text-slate-700">Contraseña</label>
+                <label
+                  htmlFor="client-reg-password"
+                  className="block text-xs font-semibold text-slate-700"
+                >
+                  Contraseña
+                </label>
                 <div className="relative">
                   <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
                   <input
+                    id="client-reg-password"
+                    name="newPassword"
                     type={showRegPassword ? 'text' : 'password'}
                     required
+                    minLength={6}
+                    autoComplete="new-password"
                     value={regPassword}
                     onChange={(e) => setRegPassword(e.target.value)}
                     placeholder="Mínimo 6 caracteres"
@@ -419,6 +485,7 @@ export const ClientAuthModal: React.FC<ClientAuthModalProps> = ({
                   <button
                     type="button"
                     onClick={() => setShowRegPassword(!showRegPassword)}
+                    aria-label={showRegPassword ? 'Ocultar contraseña' : 'Ver contraseña'}
                     className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600"
                   >
                     {showRegPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}

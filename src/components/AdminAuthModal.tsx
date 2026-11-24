@@ -60,7 +60,7 @@ export const AdminAuthModal: React.FC<AdminAuthModalProps> = ({
 
   const emailInputRef = useRef<HTMLInputElement>(null);
 
-  // Sync mode and clear feedback when modal opens or initialMode changes
+  // Sync mode and clear form/feedback when modal opens or closes
   useEffect(() => {
     if (isOpen) {
       const targetMode =
@@ -68,6 +68,13 @@ export const AdminAuthModal: React.FC<AdminAuthModalProps> = ({
       setMode(targetMode);
       setError(null);
       setInfoMessage(null);
+      setLoginEmail('');
+      setLoginPassword('');
+      setRegName('');
+      setRegEmail('');
+      setRegCode('');
+      setRegPassword('');
+      setRegRole('Administrador General');
 
       // Auto-focus email input after modal animates in
       setTimeout(() => {
@@ -103,7 +110,7 @@ export const AdminAuthModal: React.FC<AdminAuthModalProps> = ({
     setInfoMessage(null);
 
     const result = authenticateAdmin(adminUsers, emailToAuth, passToAuth);
-    if (!result.ok) {
+    if ('error' in result) {
       setError(result.error);
       return false;
     }
@@ -207,7 +214,13 @@ export const AdminAuthModal: React.FC<AdminAuthModalProps> = ({
       return;
     }
 
-    // If not logged in, log into the newly registered account
+    // If not logged in, clear registration state and log into the newly registered account
+    setRegName('');
+    setRegEmail('');
+    setRegCode('');
+    setRegPassword('');
+    setRegRole('Administrador General');
+
     const session: AdminSession = {
       userId: newAdmin.id,
       name: newAdmin.name,
@@ -534,8 +547,7 @@ export const AdminAuthModal: React.FC<AdminAuthModalProps> = ({
                     className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 bg-white focus:outline-none focus:border-emerald-600 font-medium"
                   >
                     <option value="Administrador General">Administrador General</option>
-                    <option value="Director de Nutrición">Director de Nutrición</option>
-                    <option value="Directora de Nutrición">Directora de Nutrición</option>
+                    <option value="Gestor de Catálogo">Gestor de Catálogo</option>
                     <option value="Analista de Operaciones">Analista de Operaciones</option>
                   </select>
                 </div>

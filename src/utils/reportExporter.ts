@@ -1,5 +1,5 @@
 import { MedicalReportRecord } from '../types/nutrivital';
-import { calculateAge, getMedicalMetricRange } from './healthAnalytics';
+import { AI_GOAL_DISCLAIMER, calculateAge, getMedicalMetricRange } from './healthAnalytics';
 
 /**
  * Generates and triggers browser download of a Medical Lab Report as structured text (.txt).
@@ -97,15 +97,30 @@ export function downloadMedicalReportTxt(
   if (report.contraindications && report.contraindications.length > 0) {
     txt += `4. CONTRAINDICACIONES Y PRECAUCIONES FARMACO-NUTRICIONALES:\n`;
     txt += `-----------------------------------------------------------\n`;
-    report.contraindications.forEach((c, idx) => {
+    report.contraindications.forEach((c) => {
       txt += ` [!] ${c}\n`;
     });
     txt += `\n`;
   }
 
+  if (report.suggestedGoals) {
+    const g = report.suggestedGoals;
+    txt += `5. METAS SUGERIDAS POR INTELIGENCIA ARTIFICIAL (ORIENTATIVO):\n`;
+    txt += `-------------------------------------------------------------\n`;
+    txt += `• Presión Arterial Meta:  ${g.targetSystolicBP}/${g.targetDiastolicBP} mmHg\n`;
+    txt += `• Pulsaciones Meta:       ${g.targetHeartRate} lpm\n`;
+    txt += `• Peso / IMC Meta:        ${g.targetWeight} kg (IMC ${g.targetBodyMass})\n`;
+    txt += `• Ingesta Calórica Meta:  ${g.targetCalories} kcal/día\n`;
+    txt += `• Horizonte Estimado:     ${g.timelineWeeks} semanas\n`;
+    if (g.aiRationale) {
+      txt += `• Justificación IA:       ${g.aiRationale}\n`;
+    }
+    txt += `\n`;
+  }
+
   txt += `================================================================================\n`;
-  txt += `DOCUMENTO GENERADO POR NUTRIVITAL CLOUD ENGINE - VALIDEZ DIGITAL\n`;
-  txt += `Este informe compila analíticas reales con calibración predictiva biométrica.\n`;
+  txt += `AVISO IMPORTANTE:\n`;
+  txt += `${AI_GOAL_DISCLAIMER}\n`;
   txt += `================================================================================\n`;
 
   const blob = new Blob([txt], { type: 'text/plain;charset=utf-8' });
@@ -379,9 +394,21 @@ export function downloadMedicalReportPdf(
         </div>
       ` : ''}
 
+      ${report.suggestedGoals ? `
+        <div class="section-title">5. Metas Sugeridas por Inteligencia Artificial (Orientativo)</div>
+        <div class="summary-box" style="background: #eff6ff; border-color: #bfdbfe; color: #1e3a8a;">
+          <div><strong>Presión Meta:</strong> ${report.suggestedGoals.targetSystolicBP}/${report.suggestedGoals.targetDiastolicBP} mmHg &nbsp;|&nbsp; <strong>Pulso Meta:</strong> ${report.suggestedGoals.targetHeartRate} lpm &nbsp;|&nbsp; <strong>Peso Meta:</strong> ${report.suggestedGoals.targetWeight} kg (IMC ${report.suggestedGoals.targetBodyMass}) &nbsp;|&nbsp; <strong>Calorías Meta:</strong> ${report.suggestedGoals.targetCalories} kcal/día (${report.suggestedGoals.timelineWeeks} sem)</div>
+          ${report.suggestedGoals.aiRationale ? `<p style="margin-top: 8px; margin-bottom: 0;">${report.suggestedGoals.aiRationale}</p>` : ''}
+        </div>
+      ` : ''}
+
+      <div class="alert-box" style="background: #fffbeb; border-color: #fde68a; color: #92400e; margin-top: 20px;">
+        <strong>Aviso de Inteligencia Artificial:</strong> ${AI_GOAL_DISCLAIMER}
+      </div>
+
       <div class="footer">
-        <div>NutriVital Health Intelligence · Sistema Seguro de Diagnóstico Nutricional</div>
-        <div>Código de Validación: NV-${report.id.substring(0, 8)}</div>
+        <div>NutriVital · Análisis Orientativo Asistido por IA (No sustituye consulta médica)</div>
+        <div>Código de Referencia: NV-${report.id.substring(0, 8)}</div>
       </div>
 
       <script>

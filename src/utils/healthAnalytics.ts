@@ -307,12 +307,154 @@ export function getWHtRStatus(whtr: number): string {
   return 'Riesgo Muy Alto (Alta Adiposidad)';
 }
 
+export const AI_GOAL_DISCLAIMER =
+  'Meta sugerida automáticamente por Inteligencia Artificial con fines orientativos. No constituye diagnóstico ni prescripción médica y no suplanta a un médico ni a un nutricionista clínico.';
+
+/**
+ * Calcula metas orientativas seguras y realistas mediante IA / reglas clínicas
+ * al analizar un informe médico. Si Gemini devolvió una propuesta en report.suggestedGoals,
+ * valida y acota los rangos a límites fisiológicos seguros.
+ */
+export function calculateAiSuggestedGoals(
+  biometrics: ClientBiometrics,
+  report: MedicalReportRecord,
+  age?: number,
+  gender?: string
+): ClientHealthGoals {
+  const heightCm = report.detectedHeight || biometrics.height || 170;
+  const currentWeight = report.detectedWeight || biometrics.bodyWeight || 70;
+  const currentSys = report.detectedSystolicBP || biometrics.systolicBP || 120;
+  const currentDia = report.detectedDiastolicBP || biometrics.diastolicBP || 80;
+  const currentHr = report.detectedHeartRate || biometrics.heartRate || 72;
+  const currentCal = biometrics.dailyCalories || 2100;
+  const currentBmi = calculateBMI(currentWeight, heightCm) || biometrics.bodyMass || 23.5;
+
+  const m = report.markers || {};
+  const fattyGrade = m.fattyLiverGrade ?? biometrics.fattyLiverGrade ?? 0;
+  const hasHighLipids =
+    (m.triglycerides !== undefined && m.triglycerides >= 150) ||
+    (m.ldlCholesterol !== undefined && m.ldlCholesterol >= 130);
+  const hasHighGlucose =
+    (m.fastingGlucose !== undefined && m.fastingGlucose >= 100) ||
+    (m.hba1c !== undefined && m.hba1c >= 5.7);
+  const isSenior = age !== undefined && age >= 65;
+
+  // Horizonte sugerido: 12 semanas si hay múltiples hallazgos cardiometabólicos, si no 8 semanas
+  const needsLongerHorizon =
+    currentSys >= 135 ||
+    currentBmi >= 27 ||
+    fattyGrade >= 1 ||
+    (m.triglycerides !== undefined && m.triglycerides >= 180) ||
+    (m.hba1c !== undefined && m.hba1c >= 5.7);
+  const defaultTimeline = needsLongerHorizon ? 12 : 8;
+
+  // 1. Presión arterial meta (escalonada y segura según edad)
+  const idealSys = isSenior ? 126 : 118;
+  const idealDia = 78;
+  const computedSys =
+    currentSys > idealSys
+      ? Math.max(idealSys, Math.round(currentSys - Math.min(14, (currentSys - idealSys) * 0.75)))
+      : Math.min(idealSys, Math.max(110, Math.round(currentSys)));
+  const computedDia =
+    currentDia > idealDia
+      ? Math.max(idealDia, Math.round(currentDia - Math.min(8, (currentDia - idealDia) * 0.75)))
+      : Math.min(idealDia, Math.max(70, Math.round(currentDia)));
+
+  // 2. Pulsaciones meta en reposo
+  const computedHr =
+    currentHr > 72
+      ? Math.max(66, Math.round(currentHr - Math.min(10, (currentHr - 68) * 0.7)))
+      : Math.max(60, Math.min(72, Math.round(currentHr)));
+
+  // 3. Peso e IMC meta (tasa segura 0.35 - 0.45 kg/sem, piso IMC 21.5)
+  const minHealthyWeight = Number(((21.5 * heightCm * heightCm) / 10000).toFixed(1));
+  let computedWeight = currentWeight;
+  if (currentBmi >= 25 || ((hasHighLipids || hasHighGlucose || fattyGrade >= 1) && currentBmi >= 23.5)) {
+    const safeLoss = Number((defaultTimeline * (currentBmi >= 28 ? 0.45 : 0.35)).toFixed(1));
+    computedWeight = Number(Math.max(minHealthyWeight, currentWeight - safeLoss).toFixed(1));
+  } else if (currentBmi < 18.5) {
+    const safeGain = Number((defaultTimeline * 0.25).toFixed(1));
+    computedWeight = Number((currentWeight + safeGain).toFixed(1));
+  }
+  const computedBmi = calculateBMI(computedWeight, heightCm) || currentBmi;
+
+  // 4. Calorías diarias meta (con pisos de seguridad metabólica)
+  const minSafeCal = gender === 'Masculino' ? 1700 : 1500;
+  let calorieAdjustment = 0;
+  if (computedWeight < currentWeight - 0.5) {
+    calorieAdjustment = hasHighGlucose || hasHighLipids ? -300 : -200;
+  } else if (computedWeight > currentWeight + 0.5) {
+    calorieAdjustment = 200;
+  } else if (hasHighGlucose) {
+    calorieAdjustment = -150;
+  }
+  const computedCal = Math.max(minSafeCal, Math.min(2800, Math.round((currentCal + calorieAdjustment) / 50) * 50));
+
+  // Si Gemini propuso metas explícitas, las validamos dentro de límites seguros
+  const llm = report.suggestedGoals;
+  const clamp = (val: number | undefined, min: number, max: number, fallback: number) =>
+    typeof val === 'number' && !Number.isNaN(val) ? Math.max(min, Math.min(max, val)) : fallback;
+
+  const timelineWeeks = Math.round(clamp(llm?.timelineWeeks, 8, 12, defaultTimeline));
+  const targetSystolicBP = Math.round(clamp(llm?.targetSystolicBP, 110, isSenior ? 132 : 124, computedSys));
+  const targetDiastolicBP = Math.round(clamp(llm?.targetDiastolicBP, 70, 84, computedDia));
+  const targetHeartRate = Math.round(clamp(llm?.targetHeartRate, 60, 76, computedHr));
+  const targetWeight = Number(
+    clamp(llm?.targetWeight, Math.max(45, minHealthyWeight), currentWeight + 4, computedWeight).toFixed(1)
+  );
+  const targetBodyMass = calculateBMI(targetWeight, heightCm) || computedBmi;
+  const targetCalories = Math.round(clamp(llm?.targetCalories, minSafeCal, 2800, computedCal) / 50) * 50;
+
+  const reasons: string[] = [];
+  if (currentSys > targetSystolicBP) {
+    reasons.push(`reducir presión hacia ${targetSystolicBP}/${targetDiastolicBP} mmHg`);
+  }
+  if (hasHighLipids) {
+    reasons.push('optimizar perfil lipídico (triglicéridos/LDL)');
+  }
+  if (hasHighGlucose) {
+    reasons.push('estabilizar glucosa en ayunas / HbA1c');
+  }
+  if (fattyGrade >= 1) {
+    reasons.push(`apoyar reversión de hígado graso (G${fattyGrade})`);
+  }
+  if (targetWeight < currentWeight - 0.5) {
+    reasons.push(`descenso gradual seguro hacia ${targetWeight} kg`);
+  }
+
+  const baseRationale =
+    llm?.aiRationale && llm.aiRationale.trim().length > 20
+      ? llm.aiRationale.trim()
+      : reasons.length > 0
+        ? `Basado en "${report.fileName}"${age !== undefined ? ` (${age} años)` : ''}, la IA sugiere un horizonte de ${timelineWeeks} semanas enfocado en: ${reasons.join(', ')}.`
+        : `Basado en "${report.fileName}", tus valores están en rangos estables; la IA sugiere un plan de mantenimiento de ${timelineWeeks} semanas.`;
+
+  const aiRationale = baseRationale.toLowerCase().includes('no sustituy') ||
+    baseRationale.toLowerCase().includes('no suplant')
+    ? baseRationale
+    : `${baseRationale} ${AI_GOAL_DISCLAIMER}`;
+
+  return {
+    targetSystolicBP,
+    targetDiastolicBP,
+    targetHeartRate,
+    targetWeight,
+    targetBodyMass,
+    targetCalories,
+    timelineWeeks,
+    source: 'ai_report',
+    aiRationale,
+    generatedFromReportId: report.id,
+    generatedAt: new Date().toISOString().replace('T', ' ').substring(0, 16),
+  };
+}
+
 export function calculateOverallVitalityScore(
   systolic: number,
   diastolic: number,
   heartRate: number,
   bodyMass: number,
-  activeSupplementsCount: number,
+  supplementVitalityBonus: number,
   whtr?: number
 ): number {
   const bpDist = Math.max(0, systolic - 115) * 0.7 + Math.max(0, diastolic - 75) * 0.8;
@@ -329,14 +471,14 @@ export function calculateOverallVitalityScore(
     whtrPenalty = (whtr - 0.50) * 45;
   }
 
-  const supplementBonus = Math.min(18, activeSupplementsCount * 4.5);
+  const clampedSupplementBonus = Math.max(-10, Math.min(18, supplementVitalityBonus));
 
   const rawScore =
     bpScore * 0.40 +
     hrScore * 0.25 +
     massScore * 0.25 +
     Math.max(0, 100 - whtrPenalty * 10) * 0.10 +
-    supplementBonus;
+    clampedSupplementBonus;
 
   return Math.min(99, Math.max(20, Math.round(rawScore)));
 }
@@ -346,8 +488,10 @@ export function calculateProjectedImpact(
   goals: ClientHealthGoals,
   selectedSupplements: SupplementItem[],
   simulatedCalories: number,
-  weeks: number = 8
-): ProjectedImpactSummary & { waistDelta: number; whtr: number; whtrStatus: string; hepaticRiskScore: number } {
+  weeks: number = 8,
+  medicalReports: MedicalReportRecord[] = [],
+  age?: number
+): ProjectedImpactSummary & { waistDelta: number; whtr: number; whtrStatus: string; hepaticRiskScore: number; baselineHepaticRiskScore: number } {
   const weeksClamped = Math.max(1, Math.min(24, weeks));
   const heightCm = biometrics.height || 170;
   const waistCm = biometrics.waistCircumference || 80;
@@ -376,7 +520,8 @@ export function calculateProjectedImpact(
   const projectedWhtr = calculateWHtR(projectedWaist, heightCm);
   const whtrStatus = getWHtRStatus(projectedWhtr);
 
-  const visceralFatBpLoad = currentWhtr > 0.50 ? (currentWhtr - 0.50) * 10 : 0;
+  // Solo el CAMBIO en adiposidad visceral afecta el delta de presión (sin penalizar el estado basal dos veces)
+  const visceralFatBpDelta = (projectedWhtr - currentWhtr) * 18;
 
   const projectedWeight = Math.max(40, biometrics.bodyWeight + totalWeightDelta);
   const baselineBmi = biometrics.height
@@ -400,13 +545,19 @@ export function calculateProjectedImpact(
   const finalSuppDiastolic = rawSupplementDiastolic * satFactor;
   const finalSuppHr = rawSupplementHr * (1 / (1 + 0.03 * Math.abs(rawSupplementHr)));
 
-  const totalSystolicDelta = Number((finalSuppSystolic + weightBpSystolicImpact + visceralFatBpLoad).toFixed(1));
-  const totalDiastolicDelta = Number((finalSuppDiastolic + weightBpDiastolicImpact + visceralFatBpLoad * 0.6).toFixed(1));
+  const totalSystolicDelta = Number((finalSuppSystolic + weightBpSystolicImpact + visceralFatBpDelta).toFixed(1));
+  const totalDiastolicDelta = Number((finalSuppDiastolic + weightBpDiastolicImpact + visceralFatBpDelta * 0.6).toFixed(1));
   const totalHeartRateDelta = Number(finalSuppHr.toFixed(1));
 
   const projectedSystolic = Math.max(90, Math.min(200, biometrics.systolicBP + totalSystolicDelta));
   const projectedDiastolic = Math.max(55, Math.min(130, biometrics.diastolicBP + totalDiastolicDelta));
   const projectedHr = Math.max(48, Math.min(130, biometrics.heartRate + totalHeartRateDelta));
+
+  // Bono/penalización real de vitalidad según vitalityScoreBonus de cada factor (ej. Sal penaliza -3)
+  const supplementVitalityBonus = selectedSupplements.reduce(
+    (sum, s) => sum + (s.vitalityScoreBonus ?? 0) * 0.55,
+    0
+  );
 
   const baselineScore = calculateOverallVitalityScore(
     biometrics.systolicBP,
@@ -422,11 +573,11 @@ export function calculateProjectedImpact(
     projectedDiastolic,
     projectedHr,
     projectedMass,
-    selectedSupplements.length,
+    supplementVitalityBonus,
     projectedWhtr
   );
 
-  const bpCategory = getBloodPressureCategory(projectedSystolic, projectedDiastolic);
+  const bpCategory = getBloodPressureCategory(projectedSystolic, projectedDiastolic, age);
 
   let trendDirection: 'improving' | 'stable' | 'deteriorating' = 'stable';
   if (
@@ -439,19 +590,37 @@ export function calculateProjectedImpact(
     trendDirection = 'deteriorating';
   }
 
-  // Proyección de Hígado Graso (esteatosis hepática)
-  const initialGrade = biometrics.fattyLiverGrade ?? 0;
+  // Proyección de Hígado Graso / Riesgo Hepático integrando informes de laboratorio (triglicéridos, glucosa, grado)
+  const consolidatedMarkers = medicalReports.reduceRight<Record<string, number | undefined>>(
+    (acc, rep) => ({ ...acc, ...rep.markers }),
+    {}
+  );
+  const initialGrade = consolidatedMarkers.fattyLiverGrade ?? biometrics.fattyLiverGrade ?? 0;
   const hasOmega = selectedSupplements.some((s) => s.id === 'SUP-OMEGA3');
   const hasCoffee = selectedSupplements.some((s) => s.id === 'SUP-CAFE');
   const hasSalt = selectedSupplements.some((s) => s.id === 'SUP-SAL');
 
-  let hepaticRiskScore = initialGrade * 30; // base score 0..90
-  if (totalWeightDelta < -2) hepaticRiskScore -= 15;
-  if (totalWeightDelta > 2) hepaticRiskScore += 20;
+  let baselineHepaticRiskScore = initialGrade * 28;
+  if (consolidatedMarkers.triglycerides !== undefined && consolidatedMarkers.triglycerides >= 200) {
+    baselineHepaticRiskScore += 22;
+  } else if (consolidatedMarkers.triglycerides !== undefined && consolidatedMarkers.triglycerides >= 150) {
+    baselineHepaticRiskScore += 14;
+  }
+  if (
+    (consolidatedMarkers.fastingGlucose !== undefined && consolidatedMarkers.fastingGlucose >= 100) ||
+    (consolidatedMarkers.hba1c !== undefined && consolidatedMarkers.hba1c >= 5.7)
+  ) {
+    baselineHepaticRiskScore += 8;
+  }
+  if (currentWhtr > 0.53) baselineHepaticRiskScore += 12;
+  baselineHepaticRiskScore = Math.max(0, Math.min(100, Math.round(baselineHepaticRiskScore)));
+
+  let hepaticRiskScore = baselineHepaticRiskScore;
+  if (totalWeightDelta < -1.5) hepaticRiskScore -= Math.min(20, Math.round(Math.abs(totalWeightDelta) * 4));
+  if (totalWeightDelta > 1.5) hepaticRiskScore += Math.min(22, Math.round(totalWeightDelta * 5));
   if (hasOmega) hepaticRiskScore -= 12;
-  if (hasCoffee) hepaticRiskScore -= 8; // Efecto hepatoprotector comprobado de ácidos clorogénicos
+  if (hasCoffee) hepaticRiskScore -= 8; // Polifenoles y ácidos clorogénicos hepatoprotectores
   if (hasSalt) hepaticRiskScore += 12;
-  if (projectedWhtr > 0.55) hepaticRiskScore += 15;
   hepaticRiskScore = Math.max(0, Math.min(100, Math.round(hepaticRiskScore)));
 
   let fattyLiverRisk: 'Bajo / Normal' | 'Riesgo Moderado' | 'Esteatosis Activa' = 'Bajo / Normal';
@@ -477,6 +646,7 @@ export function calculateProjectedImpact(
     whtrStatus,
     fattyLiverRisk,
     hepaticRiskScore,
+    baselineHepaticRiskScore,
   };
 }
 
@@ -485,7 +655,9 @@ export function generateDynamicBiometricTrend(
   goals: ClientHealthGoals,
   selectedSupplements: SupplementItem[],
   simulatedCalories: number,
-  timelineWeeks: number = 8
+  timelineWeeks: number = 8,
+  medicalReports: MedicalReportRecord[] = [],
+  age?: number
 ): BiometricTrendPoint[] {
   const weeksTotal = Math.max(4, Math.min(16, timelineWeeks));
   const heightCm = biometrics.height || 170;
@@ -496,7 +668,14 @@ export function generateDynamicBiometricTrend(
     goals,
     selectedSupplements,
     simulatedCalories,
-    weeksTotal
+    weeksTotal,
+    medicalReports,
+    age
+  );
+
+  const supplementVitalityBonus = selectedSupplements.reduce(
+    (sum, s) => sum + (s.vitalityScoreBonus ?? 0) * 0.55,
+    0
   );
 
   const points: BiometricTrendPoint[] = [];
@@ -515,7 +694,9 @@ export function generateDynamicBiometricTrend(
     : biometrics.bodyMass || 24;
   const baselineWhtr = calculateWHtR(waistCm, heightCm);
 
-  const initialFattyScore = (biometrics.fattyLiverGrade ?? 0) * 30;
+  const initialFattyScore = impact.baselineHepaticRiskScore;
+
+  const maxAdaptation = 1 - Math.exp(-2.2);
 
   for (const w of milestones) {
     if (w === 0) {
@@ -541,13 +722,14 @@ export function generateDynamicBiometricTrend(
         targetHeartRate: goals.targetHeartRate,
         targetWeight: goals.targetWeight,
         targetBodyMass: goals.targetBodyMass,
-        targetFattyLiverScore: 10,
+        targetFattyLiverScore: 15,
       });
       continue;
     }
 
     const progressRatio = w / weeksTotal;
-    const adaptationCurve = 1 - Math.exp(-2.2 * progressRatio);
+    // Normalizada para alcanzar exactamente 1.0 en la semana final y coincidir con los KPIs
+    const adaptationCurve = (1 - Math.exp(-2.2 * progressRatio)) / maxAdaptation;
 
     const curSystolic = Number((biometrics.systolicBP + impact.systolicDelta * adaptationCurve).toFixed(1));
     const curDiastolic = Number((biometrics.diastolicBP + impact.diastolicDelta * adaptationCurve).toFixed(1));
@@ -566,7 +748,7 @@ export function generateDynamicBiometricTrend(
       curDiastolic,
       curHr,
       curMass,
-      selectedSupplements.length,
+      supplementVitalityBonus * adaptationCurve,
       curWhtr
     );
 
@@ -590,7 +772,7 @@ export function generateDynamicBiometricTrend(
       targetHeartRate: goals.targetHeartRate,
       targetWeight: goals.targetWeight,
       targetBodyMass: goals.targetBodyMass,
-      targetFattyLiverScore: 10,
+      targetFattyLiverScore: 15,
     });
   }
 
@@ -609,7 +791,8 @@ export function generateNutritionalRecommendations(
   allProducts: Product[],
   trendPoints?: BiometricTrendPoint[],
   selectedChartMetric?: ChartMetricFocus,
-  medicalReports: MedicalReportRecord[] = []
+  medicalReports: MedicalReportRecord[] = [],
+  age?: number
 ): NutritionRecommendation[] {
   const recs: NutritionRecommendation[] = [];
   const activeIds = new Set(selectedSupplements.map((s) => s.id));
@@ -618,22 +801,18 @@ export function generateNutritionalRecommendations(
   const waistCm = biometrics.waistCircumference || 80;
   const currentMetricFocus = selectedChartMetric || 'presion';
 
-  // Localizador dinámico de productos en el catálogo real
-  const findProduct = (preferredId: string, keyword: string): Product | undefined => {
+  // Localizador estricto de productos reales del catálogo (evita vincular productos no relacionados)
+  const findRealProduct = (preferredId: string, keyword: string): Product | undefined => {
     return (
-      allProducts.find((p) => p.id === preferredId) ||
-      allProducts.find((p) => p.name.toLowerCase().includes(keyword.toLowerCase())) ||
-      allProducts.find((p) => p.category.toLowerCase().includes(keyword.toLowerCase()))
+      allProducts.find((p) => p.id === preferredId && p.name.toLowerCase().includes(keyword.toLowerCase())) ||
+      allProducts.find((p) => p.name.toLowerCase().includes(keyword.toLowerCase()))
     );
   };
 
-  const omegaProd = findProduct('NV-104', 'omega');
-  const magnesiumProd = findProduct('NV-102', 'magnesio');
-  const proteinProd = findProduct('NV-101', 'proteína');
-  const ashwaProd = findProduct('NV-108', 'ashwagandha');
-  const potassiumProd = findProduct('NV-106', 'potasio');
-  const multivitProd =
-    findProduct('NV-103', 'multivitamínico') || findProduct('NV-107', 'antioxidante');
+  const omegaProd = findRealProduct('NV-104', 'omega');
+  const ashwaMagProd = findRealProduct('NV-108', 'ashwagandha') || findRealProduct('NV-108', 'magnesio');
+  const proteinProd = findRealProduct('NV-101', 'proteína');
+  const spirulinaProd = findRealProduct('NV-102', 'espirulina');
 
   const fallbackTrend =
     trendPoints && trendPoints.length > 0
@@ -643,7 +822,9 @@ export function generateNutritionalRecommendations(
         goals,
         selectedSupplements,
         simulatedCalories,
-        goals.timelineWeeks || 8
+        goals.timelineWeeks || 8,
+        medicalReports,
+        age
       );
 
   const initialPt = fallbackTrend[0];
@@ -680,10 +861,10 @@ export function generateNutritionalRecommendations(
         title: `Alerta Clínica de Laboratorio: Vigilancia Renal/Potasio (${reportRef})`,
         message: `Tu informe médico registra ${m.potassium ? `potasio sérico en ${m.potassium} mEq/L` : ''
           }${m.potassium && m.creatinine ? ' y ' : ''}${m.creatinine ? `creatinina en ${m.creatinine} mg/dL` : ''
-          }. Se desaconseja el uso de electrolitos con potasio añadido; prioriza hidratación controlada y Omega-3.`,
-        suggestedAction: 'Evitar complejos de potasio y consultar ajuste con nefrólogo',
-        relatedProductId: magnesiumProd?.id || 'NV-102',
-        relatedSupplementId: 'SUP-MAGNESIO',
+          }. Se desaconseja el uso de electrolitos con potasio añadido; prioriza consulta con tu médico y soporte suave con Omega-3.`,
+        suggestedAction: 'Evitar complejos de potasio y consultar evaluación con nefrólogo/médico',
+        relatedProductId: omegaProd?.id,
+        relatedSupplementId: 'SUP-OMEGA3',
         chartMetricTrigger: 'presion',
         metricEvidence: `Informe ${reportDateRef} · K+ ${m.potassium ?? '—'} mEq/L · Cr ${m.creatinine ?? '—'} mg/dL`,
       });
@@ -703,7 +884,7 @@ export function generateNutritionalRecommendations(
         title: `Modulación Lipídica según Analítica (${[trigText, ldlText].filter(Boolean).join(' · ')})`,
         message: `Tu informe "${reportRef}" muestra perfil lipídico elevado. Los ácidos grasos Omega-3 EPA+DHA reducen la síntesis hepática de triglicéridos entre un 15% y 25% y protegen el endotelio vascular.`,
         suggestedAction: 'Simular Omega-3 Vegano EPA+DHA en tu gráfica cardiovascular',
-        relatedProductId: omegaProd?.id || 'NV-104',
+        relatedProductId: omegaProd?.id,
         relatedSupplementId: 'SUP-OMEGA3',
         chartMetricTrigger: 'presion',
         metricEvidence: `Lab (${reportDateRef}): ${[trigText, ldlText].filter(Boolean).join(' · ')}`,
@@ -723,8 +904,8 @@ export function generateNutritionalRecommendations(
         message: `El laboratorio indica sensibilidad insulínica reducida. Reemplazar carbohidratos refinados por Proteína Bio-Activa con Matcha y aplicar -200 kcal/día estabiliza la curva glucémica y reduce la grasa visceral.`,
         suggestedAction: 'Aplicar ajuste de -200 kcal y añadir proteína de bajo índice glucémico',
         suggestedCalorieDelta: -200,
-        relatedProductId: proteinProd?.id || 'NV-101',
-        relatedSupplementId: 'SUP-PROTEINA_MATCHA',
+        relatedProductId: proteinProd?.id,
+        relatedSupplementId: 'SUP-MATCHA',
         chartMetricTrigger: 'peso_masa',
         metricEvidence: `Lab (${reportDateRef}): Glucosa ${m.fastingGlucose ?? 'N/D'} mg/dL`,
       });
@@ -740,7 +921,7 @@ export function generateNutritionalRecommendations(
         message: `Tu informe detecta ${m.vitaminD && m.vitaminD < 30 ? `niveles subóptimos de Vitamina D (${m.vitaminD} ng/mL)` : 'marcadores inflamatorios elevados'
           }. El Magnesio Bisglicinato actúa como cofactor esencial para activar la Vitamina D y reducir la inflamación celular.`,
         suggestedAction: 'Activar Magnesio Bisglicinato Quelado en tu protocolo',
-        relatedProductId: magnesiumProd?.id || 'NV-102',
+        relatedProductId: ashwaMagProd?.id,
         relatedSupplementId: 'SUP-MAGNESIO',
         chartMetricTrigger: 'vitalidad',
         metricEvidence: `Lab (${reportDateRef}): ${m.vitaminD ? `Vit D ${m.vitaminD} ng/mL` : `PCR ${m.hsCRP} mg/L`}`,
@@ -754,9 +935,10 @@ export function generateNutritionalRecommendations(
         category: 'suplemento',
         urgency: m.ferritin < 15 ? 'alta' : 'media',
         title: `Reserva Férrica & Oxigenación Mitocondrial (Ferritina: ${m.ferritin} ng/mL)`,
-        message: `Tu analítica indica ferritina sérica en ${m.ferritin} ng/mL (óptimo funcional: >40 ng/mL). Un aporte sinérgico de micronutrientes y vitamina C apoya el transporte mitocondrial de oxígeno.`,
-        suggestedAction: 'Añadir complejo de micronutrientes y optimizar ingesta',
-        relatedProductId: multivitProd?.id || 'NV-103',
+        message: `Tu analítica indica ferritina sérica en ${m.ferritin} ng/mL (óptimo funcional: >40 ng/mL). La Espirulina Azul & Chlorella aporta micronutrientes biodisponibles que apoyan el transporte celular de oxígeno; valida suplementación de hierro con tu médico.`,
+        suggestedAction: 'Simular Espirulina Azul & Chlorella y consultar seguimiento médico',
+        relatedProductId: spirulinaProd?.id,
+        relatedSupplementId: 'SUP-ESPIRULINA',
         chartMetricTrigger: 'vitalidad',
         metricEvidence: `Lab (${reportDateRef}): Ferritina ${m.ferritin} ng/mL`,
       });
@@ -768,9 +950,10 @@ export function generateNutritionalRecommendations(
   // =========================================================================
   const sysGapToGoal = Number((finalPt.systolicBP - goals.targetSystolicBP).toFixed(1));
   const diaGapToGoal = Number((finalPt.diastolicBP - goals.targetDiastolicBP).toFixed(1));
-  const projectedBpCat = getBloodPressureCategory(finalPt.systolicBP, finalPt.diastolicBP);
+  const projectedBpCat = getBloodPressureCategory(finalPt.systolicBP, finalPt.diastolicBP, age);
+  const bpHighThreshold = age !== undefined && age >= 65 ? 134 : 128;
 
-  if (sysGapToGoal > 2 || diaGapToGoal > 2 || finalPt.systolicBP >= 128) {
+  if (sysGapToGoal > 2 || diaGapToGoal > 2 || finalPt.systolicBP >= bpHighThreshold) {
     const hasOmega = activeIds.has('SUP-OMEGA3');
     const hasMagnesium = activeIds.has('SUP-MAGNESIO');
 
@@ -783,16 +966,21 @@ export function generateNutritionalRecommendations(
       ? 'Omega-3 Vegano EPA+DHA'
       : !hasMagnesium || blockPotassium
         ? 'Magnesio Bisglicinato Quelado'
-        : 'Complejo de Potasio & Electrolitos';
+        : 'Citrato de Potasio & Electrolitos (dietético)';
 
     recs.push({
       id: 'rec-curve-bp-gap',
       category: 'presion',
       urgency: finalPt.systolicBP >= 138 || sysGapToGoal >= 10 ? 'alta' : 'media',
       title: `Brecha Arterial Detectada en Curva (${projectedBpCat})`,
-      message: `La curva proyecta cerrar en ${Math.round(finalPt.systolicBP)}/${Math.round(finalPt.diastolicBP)} mmHg en ${finalWeekLabel}, quedando +${Math.max(0, sysGapToGoal).toFixed(1)} mmHg por encima de tu meta (${goals.targetSystolicBP}/${goals.targetDiastolicBP} mmHg). Integrar ${recommendedSuppLabel} acelerará la vasodilatación endotelial.`,
-      suggestedAction: `Simular ${recommendedSuppLabel} para doblar la curva hacia tu meta`,
-      relatedProductId: !hasOmega ? omegaProd?.id || 'NV-104' : magnesiumProd?.id || 'NV-102',
+      message: `La curva proyecta cerrar en ${Math.round(finalPt.systolicBP)}/${Math.round(finalPt.diastolicBP)} mmHg en ${finalWeekLabel}, quedando +${Math.max(0, sysGapToGoal).toFixed(1)} mmHg por encima de la meta sugerida por IA (${goals.targetSystolicBP}/${goals.targetDiastolicBP} mmHg). Integrar ${recommendedSuppLabel} favorece la vasodilatación endotelial.`,
+      suggestedAction: `Simular ${recommendedSuppLabel} para acercar la curva a la meta`,
+      relatedProductId:
+        recommendedSuppId === 'SUP-OMEGA3'
+          ? omegaProd?.id
+          : recommendedSuppId === 'SUP-MAGNESIO'
+            ? ashwaMagProd?.id
+            : undefined,
       relatedSupplementId: recommendedSuppId,
       chartMetricTrigger: 'presion',
       metricEvidence: `${Math.round(initialPt.systolicBP)}/${Math.round(initialPt.diastolicBP)} → ${Math.round(finalPt.systolicBP)}/${Math.round(finalPt.diastolicBP)} mmHg`,
@@ -802,10 +990,10 @@ export function generateNutritionalRecommendations(
       id: 'rec-curve-bp-converging',
       category: 'presion',
       urgency: 'positiva',
-      title: 'Curva de Presión Arterial Convergiendo a la Meta',
-      message: `La trayectoria arterial desciende de ${Math.round(initialPt.systolicBP)}/${Math.round(initialPt.diastolicBP)} mmHg a ${Math.round(finalPt.systolicBP)}/${Math.round(finalPt.diastolicBP)} mmHg en ${finalWeekLabel}, alineándose con tu objetivo clínico (${goals.targetSystolicBP}/${goals.targetDiastolicBP} mmHg).`,
+      title: 'Curva de Presión Arterial Convergiendo a la Meta IA',
+      message: `La trayectoria arterial desciende de ${Math.round(initialPt.systolicBP)}/${Math.round(initialPt.diastolicBP)} mmHg a ${Math.round(finalPt.systolicBP)}/${Math.round(finalPt.diastolicBP)} mmHg en ${finalWeekLabel}, alineándose con la meta sugerida (${goals.targetSystolicBP}/${goals.targetDiastolicBP} mmHg).`,
       suggestedAction: 'Mantener protocolo antioxidante y balance electrolítico actual',
-      relatedProductId: magnesiumProd?.id || 'NV-102',
+      relatedProductId: ashwaMagProd?.id,
       relatedSupplementId: 'SUP-MAGNESIO',
       chartMetricTrigger: 'presion',
       metricEvidence: `Tendencia: ${(finalPt.systolicBP - initialPt.systolicBP).toFixed(1)} mmHg en ${finalWeekLabel}`,
@@ -823,11 +1011,11 @@ export function generateNutritionalRecommendations(
       category: 'pulsaciones',
       urgency: finalPt.heartRate >= 84 ? 'alta' : 'media',
       title: `Modulación Autonómica en Curva Cardíaca (+${Math.max(0, hrGapToGoal).toFixed(1)} lpm sobre meta)`,
-      message: `En ${finalWeekLabel}, tus pulsaciones en reposo proyectan ${Math.round(finalPt.heartRate)} lpm frente a tu meta de ${goals.targetHeartRate} lpm. El extracto de Ashwagandha KSM-66 reduce el tono simpático y estabiliza la variabilidad cardíaca.`,
+      message: `En ${finalWeekLabel}, tus pulsaciones en reposo proyectan ${Math.round(finalPt.heartRate)} lpm frente a la meta sugerida de ${goals.targetHeartRate} lpm. El extracto de Ashwagandha KSM-66 reduce el tono simpático y estabiliza la variabilidad cardíaca.`,
       suggestedAction: hasAshwa
         ? 'Mantener Ashwagandha KSM-66 y reducir estimulantes vespertinos'
         : 'Activar Ashwagandha KSM-66 en la simulación para bajar lpm',
-      relatedProductId: ashwaProd?.id || 'NV-108',
+      relatedProductId: ashwaMagProd?.id,
       relatedSupplementId: 'SUP-ASHWAGANDHA',
       chartMetricTrigger: 'pulsaciones',
       metricEvidence: `${Math.round(initialPt.heartRate)} lpm → ${Math.round(finalPt.heartRate)} lpm (Meta: ${goals.targetHeartRate} lpm)`,
@@ -844,17 +1032,17 @@ export function generateNutritionalRecommendations(
   const projectedWhtr = calculateWHtR(projectedWaist, heightCm);
 
   if (calDeltaVsTarget > 200 || (weightGapToGoal > 1.5 && weightCurveChange >= 0)) {
-    const suggestedCut = Math.min(450, Math.max(250, calDeltaVsTarget > 0 ? calDeltaVsTarget : 300));
+    const suggestedCut = Math.min(450, Math.max(200, calDeltaVsTarget > 0 ? Math.round(calDeltaVsTarget / 50) * 50 : 250));
     recs.push({
       id: 'rec-curve-weight-stall',
       category: 'calorias',
       urgency: weightGapToGoal > 4 ? 'alta' : 'media',
       title: `Desviación en Curva de Peso (${weightCurveChange >= 0 ? `+${weightCurveChange}` : weightCurveChange} kg en ${finalWeekLabel})`,
-      message: `Con ${simulatedCalories} kcal/día, tu peso proyectado en ${finalWeekLabel} es de ${finalPt.bodyWeight} kg (IMC ${finalPt.bodyMass}), manteniéndose a ${weightGapToGoal.toFixed(1)} kg de tu meta (${goals.targetWeight} kg). Aplicar un ajuste de -${suggestedCut} kcal/día inclinará la curva descendente.`,
+      message: `Con ${simulatedCalories} kcal/día, tu peso proyectado en ${finalWeekLabel} es de ${finalPt.bodyWeight} kg (IMC ${finalPt.bodyMass}), a ${weightGapToGoal.toFixed(1)} kg de la meta sugerida (${goals.targetWeight} kg). Aplicar un ajuste de -${suggestedCut} kcal/día inclinará la curva descendente.`,
       suggestedAction: `Aplicar ajuste de -${suggestedCut} kcal/día en el simulador`,
       suggestedCalorieDelta: -suggestedCut,
-      relatedProductId: proteinProd?.id || 'NV-101',
-      relatedSupplementId: 'SUP-PROTEINA_MATCHA',
+      relatedProductId: proteinProd?.id,
+      relatedSupplementId: 'SUP-MATCHA',
       chartMetricTrigger: 'peso_masa',
       metricEvidence: `${initialPt.bodyWeight} kg → ${finalPt.bodyWeight} kg · IMC ${finalPt.bodyMass}`,
     });
@@ -866,8 +1054,8 @@ export function generateNutritionalRecommendations(
       title: `Reducción de Adiposidad Visceral (WHtR Proyectado: ${projectedWhtr})`,
       message: `Tu relación cintura/estatura proyectada de ${projectedWhtr} (${getWHtRStatus(projectedWhtr)}) sugiere potenciar la termogénesis lipídica. Combinar Proteína Bio-Activa con Matcha acelera la reducción abdominal sin perder tono muscular.`,
       suggestedAction: 'Simular complejo termogénico Matcha & Proteína Germinada',
-      relatedProductId: proteinProd?.id || 'NV-101',
-      relatedSupplementId: 'SUP-PROTEINA_MATCHA',
+      relatedProductId: proteinProd?.id,
+      relatedSupplementId: 'SUP-MATCHA',
       chartMetricTrigger: 'peso_masa',
       metricEvidence: `Cintura proj.: ${projectedWaist.toFixed(1)} cm · IMC ${finalPt.bodyMass}`,
     });
@@ -877,9 +1065,10 @@ export function generateNutritionalRecommendations(
       category: 'calorias',
       urgency: 'positiva',
       title: 'Trayectoria de Peso e IMC en Zona Óptima',
-      message: `Con ${simulatedCalories} kcal/día, tu curva evoluciona de ${initialPt.bodyWeight} kg a ${finalPt.bodyWeight} kg (IMC ${finalPt.bodyMass}) en ${finalWeekLabel}, acercándose de forma saludable a tu meta de ${goals.targetWeight} kg.`,
+      message: `Con ${simulatedCalories} kcal/día, tu curva evoluciona de ${initialPt.bodyWeight} kg a ${finalPt.bodyWeight} kg (IMC ${finalPt.bodyMass}) en ${finalWeekLabel}, acercándose de forma saludable a la meta sugerida de ${goals.targetWeight} kg.`,
       suggestedAction: 'Conservar el balance calórico y proteico actual',
-      relatedProductId: proteinProd?.id || 'NV-101',
+      relatedProductId: proteinProd?.id,
+      relatedSupplementId: 'SUP-MATCHA',
       chartMetricTrigger: 'peso_masa',
       metricEvidence: `${initialPt.bodyWeight} kg → ${finalPt.bodyWeight} kg (Meta: ${goals.targetWeight} kg)`,
     });
@@ -894,11 +1083,7 @@ export function generateNutritionalRecommendations(
       biometrics.bodyWeight > goals.targetWeight &&
       !activeNames.some((n) => n.includes('proteína') || n.includes('matcha'));
 
-    const fallbackSupp = needsThermogenic
-      ? 'SUP-PROTEINA_MATCHA'
-      : blockPotassium
-        ? 'SUP-MAGNESIO'
-        : 'SUP-POTASIO_ELECTRO';
+    const fallbackSupp = needsThermogenic ? 'SUP-MATCHA' : 'SUP-ESPIRULINA';
 
     recs.push({
       id: 'rec-curve-vitality-boost',
@@ -907,7 +1092,7 @@ export function generateNutritionalRecommendations(
       title: `Potenciación de Vitalidad Celular (${finalPt.generalHealthScore}/100 en ${finalWeekLabel})`,
       message: `Tu curva de vitalidad gana ${vitalityGain >= 0 ? `+${vitalityGain}` : vitalityGain} pts hasta alcanzar ${finalPt.generalHealthScore}/100. Activar cofactores antioxidantes maximiza la pendiente de recuperación celular.`,
       suggestedAction: 'Activar soporte mitocondrial en la simulación',
-      relatedProductId: needsThermogenic ? proteinProd?.id || 'NV-101' : magnesiumProd?.id || 'NV-102',
+      relatedProductId: needsThermogenic ? proteinProd?.id : spirulinaProd?.id,
       relatedSupplementId: fallbackSupp,
       chartMetricTrigger: 'vitalidad',
       metricEvidence: `Score: ${initialPt.generalHealthScore}/100 → ${finalPt.generalHealthScore}/100`,
@@ -919,20 +1104,22 @@ export function generateNutritionalRecommendations(
   // =========================================================================
   const hasFattyLiver =
     (biometrics.fattyLiverGrade !== undefined && biometrics.fattyLiverGrade >= 1) ||
+    (consolidatedMarkers.fattyLiverGrade !== undefined && consolidatedMarkers.fattyLiverGrade >= 1) ||
     (consolidatedMarkers.triglycerides !== undefined && consolidatedMarkers.triglycerides >= 150);
   if (hasFattyLiver) {
     const hasOmega = activeIds.has('SUP-OMEGA3');
+    const gradeToShow = consolidatedMarkers.fattyLiverGrade ?? biometrics.fattyLiverGrade ?? 1;
     recs.push({
       id: 'rec-fatty-liver-protocol',
       category: 'higado',
-      urgency: (biometrics.fattyLiverGrade && biometrics.fattyLiverGrade >= 2) ? 'alta' : 'media',
-      title: `Protocolo Hepatoprotector & Modulación de Grasa Hepática (Grado ${biometrics.fattyLiverGrade || 1})`,
+      urgency: gradeToShow >= 2 ? 'alta' : 'media',
+      title: `Protocolo Hepatoprotector & Modulación de Grasa Hepática (Grado ${gradeToShow})`,
       message: 'Se detecta esteatosis hepática / elevación de triglicéridos. Los ácidos grasos poliinsaturados EPA+DHA de microalgas reducen la lipogénesis de novo en hepatocitos, mientras que la restricción de azúcares libres y el café orgánico favorecen la autofagia hepática.',
       suggestedAction: hasOmega ? 'Mantener Omega-3 EPA+DHA y reducir carbohidratos refinados' : 'Activar Omega-3 Microalgas para proteger la función hepática',
-      relatedProductId: omegaProd?.id || 'NV-104',
+      relatedProductId: omegaProd?.id,
       relatedSupplementId: 'SUP-OMEGA3',
       chartMetricTrigger: 'higado_graso',
-      metricEvidence: `Esteatosis G${biometrics.fattyLiverGrade || 1} · Triglicéridos: ${consolidatedMarkers.triglycerides || '150+'} mg/dL`,
+      metricEvidence: `Esteatosis G${gradeToShow} · Triglicéridos: ${consolidatedMarkers.triglycerides || '150+'} mg/dL`,
     });
   }
 
@@ -945,9 +1132,9 @@ export function generateNutritionalRecommendations(
       category: 'alerta',
       urgency: 'alta',
       title: 'Sobrecarga de Sodio Activa (Impacto en Rigidez Arterial)',
-      message: 'El consumo elevado de sal (>5g/día) expande el volumen plasmático y contrarresta los vasodilatadores. Se recomienda restringir la sal agregada y balancear con Citrato de Potasio.',
-      suggestedAction: 'Moderar ingesta de sodio y compensar con citrato de potasio',
-      relatedSupplementId: 'SUP-POTASIO_ELECTRO',
+      message: 'El consumo elevado de sal (>5g/día) expande el volumen plasmático y contrarresta los vasodilatadores. Se recomienda restringir la sal agregada y compensar con alimentos ricos en potasio (salvo contraindicación renal).',
+      suggestedAction: 'Desactivar exceso de sal en simulación y reducir sodio dietético',
+      relatedSupplementId: 'SUP-SAL',
       chartMetricTrigger: 'presion',
       metricEvidence: 'Sal activa en simulación: +6 mmHg sistólica proyectada',
     });
@@ -961,7 +1148,7 @@ export function generateNutritionalRecommendations(
       title: 'Ventana de Cafeína & Tono Simpático',
       message: 'El café funcional aporta polifenoles y protección hepática, pero su efecto estimulante eleva transitoriamente la FC y PA. Consúmelo antes de las 14:00 y acompáñalo de magnesio o ashwagandha para amortiguar el pico adrenérgico.',
       suggestedAction: 'Consumir café matutino y amortiguar con KSM-66 Ashwagandha',
-      relatedProductId: ashwaProd?.id || 'NV-108',
+      relatedProductId: ashwaMagProd?.id,
       relatedSupplementId: 'SUP-ASHWAGANDHA',
       chartMetricTrigger: 'pulsaciones',
       metricEvidence: 'Café activo en simulación: +6 lpm ritmo cardíaco',

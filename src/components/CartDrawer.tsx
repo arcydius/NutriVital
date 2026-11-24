@@ -35,20 +35,21 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   onRemoveItem,
   onCompletePurchase,
 }) => {
-  const [customerName, setCustomerName] = useState(() => currentClient?.name || 'Cliente NutriVital');
-  const [customerEmail, setCustomerEmail] = useState(() => currentClient?.email || 'cliente@nutrivital.salud');
+  const [customerName, setCustomerName] = useState(() => currentClient?.name || '');
+  const [customerEmail, setCustomerEmail] = useState(() => currentClient?.email || '');
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [completedReceipt, setCompletedReceipt] = useState<OrderReceipt | null>(null);
 
-  // Synchronize customer details with active client session or defaults
+  // Synchronize customer details with active client session (leave empty with placeholder for guests)
   useEffect(() => {
     if (currentClient) {
       setCustomerName(currentClient.name);
       setCustomerEmail(currentClient.email);
     } else {
-      setCustomerName('Cliente NutriVital');
-      setCustomerEmail('cliente@nutrivital.salud');
+      setCustomerName('');
+      setCustomerEmail('');
     }
+    setCheckoutError(null);
   }, [currentClient, isOpen]);
 
   const handleCloseAll = () => {
@@ -88,6 +89,12 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
 
     if (!customerName.trim() || !customerEmail.trim()) {
       setCheckoutError('Por favor completa tu nombre y correo para generar el recibo.');
+      return;
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(customerEmail.trim())) {
+      setCheckoutError('Por favor ingresa un correo electrónico válido.');
       return;
     }
 
@@ -330,10 +337,14 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                     </label>
                     <input
                       id="checkout-name"
+                      name="customerName"
                       type="text"
+                      required
+                      autoComplete="name"
+                      placeholder="Ej. Laura Morales"
                       value={customerName}
                       onChange={(e) => setCustomerName(e.target.value)}
-                      className="w-full px-3 py-1.5 text-xs rounded-lg border border-slate-200 bg-white"
+                      className="w-full px-3 py-1.5 text-xs rounded-lg border border-slate-200 bg-white focus:outline-none focus:border-emerald-600"
                     />
                   </div>
                   <div>
@@ -345,10 +356,14 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                     </label>
                     <input
                       id="checkout-email"
+                      name="customerEmail"
                       type="email"
+                      required
+                      autoComplete="email"
+                      placeholder="tu@correo.com"
                       value={customerEmail}
                       onChange={(e) => setCustomerEmail(e.target.value)}
-                      className="w-full px-3 py-1.5 text-xs rounded-lg border border-slate-200 bg-white"
+                      className="w-full px-3 py-1.5 text-xs rounded-lg border border-slate-200 bg-white focus:outline-none focus:border-emerald-600"
                     />
                   </div>
                 </div>

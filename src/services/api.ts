@@ -1,16 +1,24 @@
 import {
   ClientBiometrics,
-  ClientHealthGoals,
   ClientUser,
   Gender,
   MedicalReportRecord,
   Product,
 } from '../types/nutrivital';
 
-// URL base cuando la carpeta api/ se monta en XAMPP (C:\xampp\htdocs\nutrivital\api)
-const PHP_API_BASE = 'http://localhost/nutrivital/api';
+// Sincronización con backend externo desactivada por defecto hasta migrar a Supabase.
+// Para activar el backend PHP local (XAMPP), definir VITE_ENABLE_PHP_BACKEND=true en .env.local
+const PHP_BACKEND_ENABLED =
+  typeof import.meta !== 'undefined' &&
+  import.meta.env?.VITE_ENABLE_PHP_BACKEND === 'true';
+const PHP_API_BASE =
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_PHP_API_BASE) ||
+  'http://localhost/nutrivital/api';
 
 async function safeFetch(url: string, options?: RequestInit) {
+  if (!PHP_BACKEND_ENABLED) {
+    return null;
+  }
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 1800);
@@ -19,7 +27,7 @@ async function safeFetch(url: string, options?: RequestInit) {
     if (!res.ok) return null;
     return await res.json();
   } catch {
-    // XAMPP Apache / MySQL no activo: la aplicación continúa operando offline con localStorage
+    // Backend no disponible: la aplicación continúa operando localmente con localStorage
     return null;
   }
 }
@@ -40,23 +48,6 @@ export const nutriApi = {
         biometrics,
         dateOfBirth,
         gender,
-      }),
-    });
-  },
-
-  async syncAdminGoalsToDb(
-    userId: string,
-    goals: ClientHealthGoals,
-    adminId: string
-  ) {
-    return safeFetch(`${PHP_API_BASE}/users.php`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'update_goals',
-        userId,
-        goals,
-        adminId,
       }),
     });
   },

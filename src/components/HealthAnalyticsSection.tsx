@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { Edit3, FileText, LogIn, User } from 'lucide-react';
+import { FileText, LogIn, ShieldCheck, Sparkles, User, AlertCircle } from 'lucide-react';
 import {
   ClientUser,
   MedicalReportRecord,
@@ -7,6 +7,7 @@ import {
 } from '../types/nutrivital';
 import { AVAILABLE_SUPPLEMENTS } from '../data/seedData';
 import {
+  AI_GOAL_DISCLAIMER,
   calculateAge,
   calculateProjectedImpact,
   generateDynamicBiometricTrend,
@@ -27,7 +28,9 @@ const GUEST_CLIENT: ClientUser = {
     diastolicBP: 82,
     heartRate: 74,
     bodyWeight: 67,
-    bodyMass: 23.1,
+    height: 170,
+    waistCircumference: 80,
+    bodyMass: 23.2,
     dailyCalories: 2150,
     fattyLiverGrade: 0,
     lastUpdated: '2026-11-19 12:00',
@@ -37,17 +40,19 @@ const GUEST_CLIENT: ClientUser = {
     targetDiastolicBP: 78,
     targetHeartRate: 68,
     targetWeight: 63,
-    targetBodyMass: 22.0,
+    targetBodyMass: 21.8,
     targetCalories: 1950,
     timelineWeeks: 12,
-    setByAdminId: 'ADM-01',
+    source: 'baseline_default',
+    aiRationale:
+      'Referencia demostrativa. Inicia sesión y sube un informe médico para que la IA calcule tus metas orientativas personalizadas.',
   },
   activeSupplements: ['SUP-OMEGA3', 'SUP-MAGNESIO'],
 };
 
 interface HealthAnalyticsSectionProps {
   currentClient: ClientUser | null;
-  onOpenProfileModal: () => void;
+  onRequireLogin: () => void;
   products: Product[];
   onAddToCart: (product: Product) => void;
   activeSupplementIds: string[];
@@ -63,7 +68,7 @@ interface HealthAnalyticsSectionProps {
 
 export const HealthAnalyticsSection: React.FC<HealthAnalyticsSectionProps> = ({
   currentClient,
-  onOpenProfileModal,
+  onRequireLogin,
   products,
   onAddToCart,
   activeSupplementIds,
@@ -78,6 +83,7 @@ export const HealthAnalyticsSection: React.FC<HealthAnalyticsSectionProps> = ({
 }) => {
   const client = currentClient ?? GUEST_CLIENT;
   const isGuest = !currentClient;
+  const clientAge = calculateAge(client.dateOfBirth);
 
   const selectedSupplements = useMemo(() => {
     const idSet = new Set(activeSupplementIds);
@@ -92,7 +98,9 @@ export const HealthAnalyticsSection: React.FC<HealthAnalyticsSectionProps> = ({
       client.goals,
       selectedSupplements,
       simulatedCalories,
-      timelineWeeks
+      timelineWeeks,
+      medicalReports,
+      clientAge
     );
   }, [
     client.biometrics,
@@ -100,6 +108,8 @@ export const HealthAnalyticsSection: React.FC<HealthAnalyticsSectionProps> = ({
     selectedSupplements,
     simulatedCalories,
     timelineWeeks,
+    medicalReports,
+    clientAge,
   ]);
 
   const trendPoints = useMemo(() => {
@@ -108,7 +118,9 @@ export const HealthAnalyticsSection: React.FC<HealthAnalyticsSectionProps> = ({
       client.goals,
       selectedSupplements,
       simulatedCalories,
-      timelineWeeks
+      timelineWeeks,
+      medicalReports,
+      clientAge
     );
   }, [
     client.biometrics,
@@ -116,6 +128,8 @@ export const HealthAnalyticsSection: React.FC<HealthAnalyticsSectionProps> = ({
     selectedSupplements,
     simulatedCalories,
     timelineWeeks,
+    medicalReports,
+    clientAge,
   ]);
 
   const recommendations = useMemo(() => {
@@ -127,7 +141,8 @@ export const HealthAnalyticsSection: React.FC<HealthAnalyticsSectionProps> = ({
       products,
       trendPoints,
       selectedChartMetric,
-      medicalReports
+      medicalReports,
+      clientAge
     );
   }, [
     client.biometrics,
@@ -138,7 +153,10 @@ export const HealthAnalyticsSection: React.FC<HealthAnalyticsSectionProps> = ({
     trendPoints,
     selectedChartMetric,
     medicalReports,
+    clientAge,
   ]);
+
+  const hasAiReportGoals = client.goals.source === 'ai_report';
 
   const handleApplyCalorieDelta = (delta: number) => {
     onChangeSimulatedCalories(Math.max(1200, Math.min(3800, simulatedCalories + delta)));
@@ -164,13 +182,13 @@ export const HealthAnalyticsSection: React.FC<HealthAnalyticsSectionProps> = ({
               Tu Perfil Biométrico & Gráfica de Metas
             </h2>
             <p className="text-sm text-slate-600 leading-relaxed">
-              Sube tus analíticas o informes médicos y simula sugerencias de la IA para observar en tiempo real cómo evolucionan tu presión arterial, ritmo cardíaco y composición corporal.
+              Sube tus analíticas o informes médicos para que la IA extraiga tus biomarcadores, calcule <strong>metas orientativas sugeridas</strong> y te permita simular en tiempo real cómo impactan calorías y suplementos antes de elegir tu protocolo.
             </p>
           </div>
 
           <div className="bg-white rounded-3xl p-4 sm:p-5 border border-emerald-100 shadow-sm flex flex-wrap items-center justify-between gap-4 shrink-0">
             <div className="flex items-center gap-3">
-              <div className={`w-11 h-11 rounded-2xl flex items-center justify-center font-bold text-sm ${
+              <div className={`w-11 h-11 rounded-2xl shrink-0 flex items-center justify-center font-bold text-sm ${
                 isGuest ? 'bg-slate-100 text-slate-600' : 'bg-emerald-100/80 text-emerald-800'
               }`}>
                 {isGuest ? (
@@ -214,27 +232,81 @@ export const HealthAnalyticsSection: React.FC<HealthAnalyticsSectionProps> = ({
               </div>
             </div>
 
-            <button
-              type="button"
-              onClick={onOpenProfileModal}
-              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5 ${
-                isGuest
-                  ? 'bg-emerald-700 hover:bg-emerald-800 text-white shadow-2xs'
-                  : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800'
-              }`}
-            >
-              {isGuest ? (
-                <>
-                  <LogIn className="w-3.5 h-3.5 text-emerald-200" />
-                  <span>Iniciar Sesión / Calibrar</span>
-                </>
-              ) : (
-                <>
-                  <Edit3 className="w-3.5 h-3.5" />
-                  <span>Editar Mi Biometría</span>
-                </>
-              )}
-            </button>
+            {isGuest ? (
+              <button
+                type="button"
+                onClick={onRequireLogin}
+                className="px-3.5 py-2 rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5 bg-emerald-700 hover:bg-emerald-800 text-white shadow-2xs"
+              >
+                <LogIn className="w-3.5 h-3.5 text-emerald-200" />
+                <span>Iniciar Sesión</span>
+              </button>
+            ) : (
+              <div
+                title="Tus datos biométricos se actualizan automáticamente al subir informes médicos"
+                className="px-3 py-1.5 rounded-xl text-[11px] font-semibold bg-emerald-50 border border-emerald-200/80 text-emerald-800 flex items-center gap-1.5 shrink-0"
+              >
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                <span>Actualizado vía informes médicos</span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Resumen de Metas Sugeridas por IA + Aviso Médico Obligatorio */}
+        <div className="rounded-3xl border border-emerald-200/80 bg-white p-4 sm:p-5 shadow-2xs space-y-3">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+            <div className="flex items-start gap-2.5">
+              <div className="w-9 h-9 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0 mt-0.5">
+                <Sparkles className="w-4 h-4" />
+              </div>
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="text-sm font-bold text-slate-900">
+                    {hasAiReportGoals
+                      ? 'Metas Orientativas Calculadas por IA según tu Informe Médico'
+                      : 'Metas Orientativas de Referencia (Pendiente de Informe Médico)'}
+                  </h3>
+                  <span
+                    className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                      hasAiReportGoals
+                        ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                        : 'bg-slate-100 text-slate-600 border-slate-200'
+                    }`}
+                  >
+                    {hasAiReportGoals
+                      ? `Generado por IA · ${client.goals.timelineWeeks} sem`
+                      : 'Referencia base'}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-600 mt-0.5 leading-relaxed">
+                  {client.goals.aiRationale ||
+                    'Sube un informe médico para que la IA personalice estas metas orientativas con base en tus resultados reales.'}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 shrink-0 text-[11px] font-mono">
+              <span className="px-2.5 py-1 rounded-xl bg-slate-50 border border-slate-200 text-slate-800">
+                PA: <strong>{client.goals.targetSystolicBP}/{client.goals.targetDiastolicBP}</strong> mmHg
+              </span>
+              <span className="px-2.5 py-1 rounded-xl bg-slate-50 border border-slate-200 text-slate-800">
+                Pulso: <strong>{client.goals.targetHeartRate}</strong> lpm
+              </span>
+              <span className="px-2.5 py-1 rounded-xl bg-slate-50 border border-slate-200 text-slate-800">
+                Peso: <strong>{client.goals.targetWeight}</strong> kg
+              </span>
+              <span className="px-2.5 py-1 rounded-xl bg-slate-50 border border-slate-200 text-slate-800">
+                Calorías: <strong>{client.goals.targetCalories}</strong> kcal
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-start gap-2 rounded-2xl bg-amber-50/90 border border-amber-200/90 px-3.5 py-2.5 text-[11px] text-amber-950">
+            <AlertCircle className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+            <p className="leading-relaxed">
+              <strong>Aviso importante (IA):</strong> {AI_GOAL_DISCLAIMER}
+            </p>
           </div>
         </div>
 
@@ -257,6 +329,7 @@ export const HealthAnalyticsSection: React.FC<HealthAnalyticsSectionProps> = ({
               onToggleSupplement={onToggleSupplement}
               availableSupplements={AVAILABLE_SUPPLEMENTS}
               medicalReports={medicalReports}
+              clientAge={clientAge}
             />
           </div>
 
@@ -281,6 +354,12 @@ export const HealthAnalyticsSection: React.FC<HealthAnalyticsSectionProps> = ({
               medicalReports={medicalReports}
               onUploadMedicalReport={onUploadMedicalReport}
               onDeleteMedicalReport={onDeleteMedicalReport}
+              isAuthenticated={!isGuest}
+              onRequireLogin={onRequireLogin}
+              clientName={client.name}
+              clientDob={client.dateOfBirth}
+              clientGender={client.gender}
+              clientAge={clientAge}
             />
           </div>
         </div>

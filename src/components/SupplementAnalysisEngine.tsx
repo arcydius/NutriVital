@@ -19,6 +19,7 @@ import {
   Loader2,
   Download,
   ShieldAlert,
+  Lock,
 } from 'lucide-react';
 import {
   BiometricTrendPoint,
@@ -33,6 +34,7 @@ import {
 import {
   calculateBMI,
   calculateWHtR,
+  getBloodPressureCategory,
   getWHtRStatus,
   ChartMetricFocus,
   getMedicalMetricRange,
@@ -66,6 +68,12 @@ interface SupplementAnalysisEngineProps {
   medicalReports: MedicalReportRecord[];
   onUploadMedicalReport: (report: MedicalReportRecord) => void;
   onDeleteMedicalReport: (reportId: string) => void;
+  isAuthenticated: boolean;
+  onRequireLogin: () => void;
+  clientName?: string;
+  clientDob?: string;
+  clientGender?: string;
+  clientAge?: number;
 }
 
 export const SupplementAnalysisEngine: React.FC<SupplementAnalysisEngineProps> = ({
@@ -85,6 +93,12 @@ export const SupplementAnalysisEngine: React.FC<SupplementAnalysisEngineProps> =
   medicalReports,
   onUploadMedicalReport,
   onDeleteMedicalReport,
+  isAuthenticated,
+  onRequireLogin,
+  clientName,
+  clientDob,
+  clientGender,
+  clientAge,
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [isAnalyzingReport, setIsAnalyzingReport] = useState(false);
@@ -100,9 +114,16 @@ export const SupplementAnalysisEngine: React.FC<SupplementAnalysisEngineProps> =
   const projectedDiastolic = Math.round(biometrics.diastolicBP + impactSummary.diastolicDelta);
   const projectedHr = Math.round(biometrics.heartRate + impactSummary.heartRateDelta);
   const projectedWeight = Number((biometrics.bodyWeight + impactSummary.weightDelta).toFixed(1));
+  const projectedBpCategory = getBloodPressureCategory(
+    projectedSystolic,
+    projectedDiastolic,
+    clientAge
+  );
 
   // IMC Real en tiempo real basado en Peso proyectado y Estatura
   const projectedBmi = calculateBMI(projectedWeight, heightCm);
+  const bmiRange = getMedicalMetricRange('bmi', projectedBmi);
+  const bmiBadgeLabel = bmiRange.label.split(' (')[0];
 
   // Cintura proyectada en tiempo real
   const waistDelta = impactSummary.waistDelta ?? impactSummary.weightDelta;
@@ -189,6 +210,12 @@ export const SupplementAnalysisEngine: React.FC<SupplementAnalysisEngineProps> =
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!isAuthenticated) {
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      onRequireLogin();
+      return;
+    }
+
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -230,6 +257,9 @@ export const SupplementAnalysisEngine: React.FC<SupplementAnalysisEngineProps> =
 
           <input
             ref={fileInputRef}
+            id="panel-report-upload"
+            name="medicalReportPanel"
+            aria-label="Subir informe médico"
             type="file"
             accept=".pdf,.png,.jpg,.jpeg,.webp,.txt"
             onChange={handleFileChange}
@@ -239,13 +269,24 @@ export const SupplementAnalysisEngine: React.FC<SupplementAnalysisEngineProps> =
           <button
             type="button"
             disabled={isAnalyzingReport}
-            onClick={() => fileInputRef.current?.click()}
+            onClick={() => {
+              if (!isAuthenticated) {
+                onRequireLogin();
+                return;
+              }
+              fileInputRef.current?.click();
+            }}
             className="px-3 py-1.5 rounded-xl bg-teal-700 hover:bg-teal-800 disabled:opacity-60 text-white text-xs font-bold transition-colors flex items-center gap-1.5 shrink-0 shadow-2xs"
           >
             {isAnalyzingReport ? (
               <>
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 <span>Analizando...</span>
+              </>
+            ) : !isAuthenticated ? (
+              <>
+                <Lock className="w-3.5 h-3.5" />
+                <span>Subir Informe</span>
               </>
             ) : (
               <>
@@ -263,7 +304,21 @@ export const SupplementAnalysisEngine: React.FC<SupplementAnalysisEngineProps> =
           </div>
         )}
 
-        {medicalReports.length === 0 ? (
+        {!isAuthenticated ? (
+          <div className="rounded-2xl border border-dashed border-emerald-200 bg-emerald-50/40 p-4 text-center space-y-2">
+            <p className="text-xs text-slate-600">
+              Inicia sesión en tu cuenta para subir informes médicos (PDF, imagen o TXT) y actualizar tus datos biométricos automáticamente.
+            </p>
+            <button
+              type="button"
+              onClick={onRequireLogin}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold transition-colors"
+            >
+              <Lock className="w-3.5 h-3.5" />
+              <span>Iniciar Sesión para Subir Informe</span>
+            </button>
+          </div>
+        ) : medicalReports.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 p-3.5 text-center">
             <p className="text-xs text-slate-500">
               Aún no has adjuntado analíticas. Sube un examen de sangre o perfil lipídico para personalizar tus recomendaciones.
@@ -294,7 +349,14 @@ export const SupplementAnalysisEngine: React.FC<SupplementAnalysisEngineProps> =
                   <div className="flex items-center gap-1 shrink-0">
                     <button
                       type="button"
-                      onClick={() => downloadMedicalReportTxt(report, 'Paciente NutriVital')}
+                      onClick={() =>
+                        downloadMedicalReportTxt(
+                          report,
+                          clientName || 'Paciente NutriVital',
+                          clientDob,
+                          clientGender
+                        )
+                      }
                       title="Descargar informe como archivo de texto plano (.txt)"
                       className="px-2 py-1 rounded-lg text-[10px] font-bold text-slate-600 bg-white border border-slate-200 hover:bg-emerald-50 hover:text-emerald-800 transition-colors flex items-center gap-1 shadow-2xs"
                     >
@@ -303,7 +365,14 @@ export const SupplementAnalysisEngine: React.FC<SupplementAnalysisEngineProps> =
                     </button>
                     <button
                       type="button"
-                      onClick={() => downloadMedicalReportPdf(report, 'Paciente NutriVital')}
+                      onClick={() =>
+                        downloadMedicalReportPdf(
+                          report,
+                          clientName || 'Paciente NutriVital',
+                          clientDob,
+                          clientGender
+                        )
+                      }
                       title="Descargar o imprimir informe clínico formateado (.pdf)"
                       className="px-2 py-1 rounded-lg text-[10px] font-bold text-slate-600 bg-white border border-slate-200 hover:bg-teal-50 hover:text-teal-800 transition-colors flex items-center gap-1 shadow-2xs"
                     >
@@ -394,6 +463,26 @@ export const SupplementAnalysisEngine: React.FC<SupplementAnalysisEngineProps> =
                     <span>{report.contraindications.join(' · ')}</span>
                   </div>
                 )}
+
+                {report.suggestedGoals && (
+                  <div className="text-[11px] bg-emerald-50/80 border border-emerald-200/80 rounded-xl p-2.5 space-y-1">
+                    <div className="flex items-center justify-between gap-2 font-bold text-emerald-900">
+                      <span className="flex items-center gap-1">
+                        <Sparkles className="w-3 h-3 text-emerald-600" />
+                        <span>Meta sugerida por IA ({report.suggestedGoals.timelineWeeks} sem)</span>
+                      </span>
+                      <span className="text-[9.5px] font-semibold text-amber-800 bg-amber-100/80 px-1.5 py-0.5 rounded">
+                        Orientativo · No médico
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-x-3 gap-y-0.5 font-mono text-[10px] text-emerald-800">
+                      <span>PA: {report.suggestedGoals.targetSystolicBP}/{report.suggestedGoals.targetDiastolicBP} mmHg</span>
+                      <span>FC: {report.suggestedGoals.targetHeartRate} lpm</span>
+                      <span>Peso: {report.suggestedGoals.targetWeight} kg</span>
+                      <span>{report.suggestedGoals.targetCalories} kcal/d</span>
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -410,13 +499,13 @@ export const SupplementAnalysisEngine: React.FC<SupplementAnalysisEngineProps> =
               <span>Presión Arterial</span>
             </span>
             <span
-              className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${impactSummary.bloodPressureCategory === 'Óptima' ||
-                  impactSummary.bloodPressureCategory === 'Normal'
+              className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${projectedBpCategory === 'Óptima' ||
+                  projectedBpCategory === 'Normal'
                   ? 'bg-emerald-100 text-emerald-800'
                   : 'bg-amber-100 text-amber-800'
                 }`}
             >
-              {impactSummary.bloodPressureCategory}
+              {projectedBpCategory}
             </span>
           </div>
 
@@ -491,8 +580,8 @@ export const SupplementAnalysisEngine: React.FC<SupplementAnalysisEngineProps> =
               <Scale className="w-4 h-4 text-emerald-600 shrink-0" />
               <span>Peso & Cintura</span>
             </span>
-            <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-emerald-50 text-emerald-800">
-              {whtrStatus.split(' ')[0]}
+            <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold border ${bmiRange.badgeClass}`}>
+              {bmiBadgeLabel}
             </span>
           </div>
 
@@ -502,7 +591,7 @@ export const SupplementAnalysisEngine: React.FC<SupplementAnalysisEngineProps> =
                 {projectedWeight}{' '}
                 <span className="text-[11px] font-normal text-slate-400">kg</span>
               </span>
-              <span className="text-xs font-bold text-amber-700 font-mono">
+              <span className={`text-xs font-bold font-mono ${bmiRange.textClass}`}>
                 IMC {projectedBmi}
               </span>
             </div>
@@ -510,7 +599,7 @@ export const SupplementAnalysisEngine: React.FC<SupplementAnalysisEngineProps> =
             <div className="flex items-center justify-between text-[11px] font-mono text-slate-600">
               <span className="flex items-center gap-1 text-slate-500">
                 <Ruler className="w-3 h-3 text-emerald-600" />
-                <span>Cintura:</span>
+                <span>Cintura ({whtrStatus.split(' ')[0]}):</span>
               </span>
               <span className="font-bold text-slate-900">
                 {projectedWaist} cm ({projectedWhtr})
@@ -587,7 +676,7 @@ export const SupplementAnalysisEngine: React.FC<SupplementAnalysisEngineProps> =
                 Sugerencias IA en Vivo
               </h3>
               <p className="text-[11px] text-slate-600">
-                Sincronizadas con gráfica e informes a {timelineWeeks} semanas.
+                Brechas frente a tus Metas IA ({timelineWeeks} sem) y alertas de tus analíticas.
               </p>
             </div>
           </div>
@@ -712,12 +801,21 @@ export const SupplementAnalysisEngine: React.FC<SupplementAnalysisEngineProps> =
                     <button
                       type="button"
                       onClick={() => onToggleSupplement(matchedSupplement.id)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold shadow-2xs transition-all flex items-center gap-1.5 ${isSupplementSimulated
-                          ? 'bg-emerald-600 text-white ring-2 ring-emerald-300'
-                          : 'bg-white hover:bg-emerald-50 text-emerald-900 border border-emerald-300'
-                        }`}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold shadow-2xs transition-all flex items-center gap-1.5 ${
+                        matchedSupplement.id === 'SUP-SAL'
+                          ? isSupplementSimulated
+                            ? 'bg-rose-600 hover:bg-rose-700 text-white'
+                            : 'bg-white hover:bg-slate-50 text-slate-700 border border-slate-200'
+                          : isSupplementSimulated
+                            ? 'bg-emerald-600 text-white ring-2 ring-emerald-300'
+                            : 'bg-white hover:bg-emerald-50 text-emerald-900 border border-emerald-300'
+                      }`}
                     >
-                      {isSupplementSimulated ? (
+                      {matchedSupplement.id === 'SUP-SAL' ? (
+                        <span>
+                          {isSupplementSimulated ? 'Quitar exceso de sal' : 'Simular exceso de sal'}
+                        </span>
+                      ) : isSupplementSimulated ? (
                         <>
                           <Check className="w-3.5 h-3.5" />
                           <span>Simulando en curva</span>
@@ -761,6 +859,10 @@ export const SupplementAnalysisEngine: React.FC<SupplementAnalysisEngineProps> =
             );
           })}
         </div>
+
+        <p className="text-[10px] text-slate-500 pt-2 border-t border-emerald-100 leading-relaxed">
+          <strong>Nota:</strong> Las sugerencias y simulaciones son generadas por IA con carácter estrictamente orientativo y no sustituyen la evaluación de un médico o nutricionista clínico.
+        </p>
       </div>
     </div>
   );

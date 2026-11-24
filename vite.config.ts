@@ -6,7 +6,12 @@ import { GoogleGenAI, Type } from '@google/genai';
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
-  const apiKey = env.GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+  const rawApiKey = (env.GEMINI_API_KEY || process.env.GEMINI_API_KEY || '').trim();
+  const isValidApiKey =
+    rawApiKey.length > 0 &&
+    !rawApiKey.includes('PEGA_AQUI') &&
+    !rawApiKey.includes('MY_GEMINI_API_KEY');
+  const apiKey = isValidApiKey ? rawApiKey : '';
 
   return {
     plugins: [
@@ -49,7 +54,11 @@ export default defineConfig(({ mode }) => {
                       data: base64Data,
                     },
                   },
-                  `Analiza este informe médico o analítica clínica (${fileName}) y extrae los biomarcadores en español. Clasifica reportType como 'Analítica Sanguínea', 'Perfil Lipídico', 'Chequeo Cardiometabólico' u 'Otro'. Incluye valores fuera de rango en flaggedFindings con sus unidades y alertas de seguridad renal/potasio en contraindications si aplica.`,
+                  `Analiza este informe médico o analítica clínica (${fileName}) y extrae los biomarcadores en español.
+1. Clasifica reportType como 'Analítica Sanguínea', 'Perfil Lipídico', 'Chequeo Cardiometabólico' o 'Panel Hormonal & Micronutrientes'.
+2. Extrae signos vitales/antropometría si aparecen (presión arterial, pulsaciones, peso en kg, estatura en cm, cintura en cm, grado de hígado graso 0 a 3).
+3. Incluye valores fuera de rango en flaggedFindings con sus unidades y alertas de seguridad renal/potasio en contraindications si aplica.
+4. Calcula en suggestedGoals unas metas orientativas conservadoras y realistas (targetSystolicBP, targetDiastolicBP, targetHeartRate, targetWeight, targetBodyMass, targetCalories, timelineWeeks entre 8 y 12, y aiRationale explicando por qué se sugieren). Recalca claramente en aiRationale que esta sugerencia es generada por IA con fines orientativos y no sustituye la evaluación ni prescripción de un médico.`,
                 ],
                 config: {
                   responseMimeType: 'application/json',
@@ -71,6 +80,8 @@ export default defineConfig(({ mode }) => {
                           hsCRP: { type: Type.NUMBER },
                           creatinine: { type: Type.NUMBER },
                           potassium: { type: Type.NUMBER },
+                          ferritin: { type: Type.NUMBER },
+                          fattyLiverGrade: { type: Type.NUMBER },
                         },
                       },
                       flaggedFindings: {
@@ -84,6 +95,22 @@ export default defineConfig(({ mode }) => {
                       detectedSystolicBP: { type: Type.NUMBER },
                       detectedDiastolicBP: { type: Type.NUMBER },
                       detectedHeartRate: { type: Type.NUMBER },
+                      detectedWeight: { type: Type.NUMBER },
+                      detectedHeight: { type: Type.NUMBER },
+                      detectedWaist: { type: Type.NUMBER },
+                      suggestedGoals: {
+                        type: Type.OBJECT,
+                        properties: {
+                          targetSystolicBP: { type: Type.NUMBER },
+                          targetDiastolicBP: { type: Type.NUMBER },
+                          targetHeartRate: { type: Type.NUMBER },
+                          targetWeight: { type: Type.NUMBER },
+                          targetBodyMass: { type: Type.NUMBER },
+                          targetCalories: { type: Type.NUMBER },
+                          timelineWeeks: { type: Type.NUMBER },
+                          aiRationale: { type: Type.STRING },
+                        },
+                      },
                     },
                     required: [
                       'reportType',
@@ -138,7 +165,8 @@ Solo puedes responder preguntas sobre:
 1. Productos y catálogo de NutriVital (Proteína Bio-Activa Matcha, Espirulina Azul, Barras Ceto, Omega-3 Vegano EPA+DHA, Elixir Adaptógeno, Colágeno Marino, Granola Germinada, Extracto KSM-66 Ashwagandha).
 2. Suplementos y simulaciones en NutriVital (Omega-3, Magnesio, Ashwagandha, Espirulina, Matcha, CoQ10, Colágeno, Vitamina D3+K2, Citrato de Potasio, Café Funcional, Sal/Sodio).
 3. Salud, datos biométricos y analíticas médicas del usuario (Presión arterial según edad, pulsaciones/ritmo cardíaco, peso, IMC, cintura, vitalidad celular, hígado graso/esteatosis hepática, glucosa, triglicéridos, colesterol LDL, vitamina D, potasio).
-4. Uso de NutriVital (carrito, envíos eco-térmicos, subida/descarga de informes médicos en PDF/TXT).
+4. Uso de NutriVital (carrito, envíos eco-térmicos, subida/descarga de informes médicos en PDF/TXT, metas orientativas sugeridas por IA).
+NOTA IMPORTANTE SOBRE METAS: Las metas en NutriVital son sugeridas automáticamente por Inteligencia Artificial al analizar los informes médicos del usuario y tienen carácter estrictamente orientativo; siempre recuerda que no sustituyen la evaluación de un médico.
 
 SI EL USUARIO PREGUNTA SOBRE CUALQUIER OTRO TEMA AJENO A LA PÁGINA O LA SALUD NUTRICIONAL (como programación, política, deportes, historia, clima, matemáticas, películas, chistes, tareas escolares, etc.), RESPONDE ÚNICA Y EXACTAMENTE CON ESTA FRASE:
 "No puedo responder esto, por favor escribe una solicitud coherente con la página."

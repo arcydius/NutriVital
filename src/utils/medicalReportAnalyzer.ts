@@ -1,4 +1,4 @@
-import { MedicalLabMarkers, MedicalReportRecord } from '../types/nutrivital';
+import { FattyLiverGrade, MedicalReportRecord } from '../types/nutrivital';
 
 const MAX_FILE_SIZE_BYTES = 8 * 1024 * 1024; // 8 MB
 
@@ -152,6 +152,23 @@ export function parseTextLabMarkers(rawText: string, fileName: string): MedicalR
     '\\d{2,3}'
   );
 
+  // Extracción de peso, estatura, cintura y grado de esteatosis hepática si figuran en el informe
+  const detectedWeight = extractNum(/peso(?:\s*corporal)?|weight/, '\\d{2,3}');
+  const detectedHeight = extractNum(/estatura|altura|talla|height/, '\\d{3}');
+  const detectedWaist = extractNum(/cintura|per[ií]metro\s*abdominal|waist/, '\\d{2,3}');
+
+  let fattyLiverGrade: FattyLiverGrade | undefined = undefined;
+  const liverNumMatch = lower.match(/(?:h[ií]gado\s*graso|esteatosis(?:\s*hep[aá]tica)?)[^\n\r]{0,25}(?:grado|g)\s*([0-3])/i);
+  if (liverNumMatch) {
+    fattyLiverGrade = Number(liverNumMatch[1]) as FattyLiverGrade;
+  } else if (/(?:h[ií]gado\s*graso|esteatosis)[^\n\r]{0,25}sever/i.test(lower)) {
+    fattyLiverGrade = 3;
+  } else if (/(?:h[ií]gado\s*graso|esteatosis)[^\n\r]{0,25}moderad/i.test(lower)) {
+    fattyLiverGrade = 2;
+  } else if (/(?:h[ií]gado\s*graso|esteatosis)[^\n\r]{0,25}leve/i.test(lower)) {
+    fattyLiverGrade = 1;
+  }
+
   // Extracción de fecha del informe si figura
   const dateMatch = lower.match(
     /(?:fecha(?:\s*de\s*emisi[oó]n|\s*informe)?[:\s]+)(\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}|\d{4}-\d{2}-\d{2})/
@@ -169,8 +186,12 @@ export function parseTextLabMarkers(rawText: string, fileName: string): MedicalR
     creatinine,
     potassium,
     ferritin,
+    fattyLiverGrade,
     detectedSystolicBP,
     detectedHeartRate,
+    detectedWeight,
+    detectedHeight,
+    detectedWaist,
   ].some((v) => v !== undefined);
 
   if (!hasAny) return null;
@@ -241,12 +262,16 @@ export function parseTextLabMarkers(rawText: string, fileName: string): MedicalR
       creatinine,
       potassium,
       ferritin,
+      fattyLiverGrade,
     },
     flaggedFindings,
     contraindications,
     detectedSystolicBP,
     detectedDiastolicBP,
     detectedHeartRate,
+    detectedWeight,
+    detectedHeight,
+    detectedWaist,
   };
 }
 
@@ -294,42 +319,54 @@ export async function analyzeMedicalReportFile(file: File): Promise<MedicalRepor
     }
   }
 
-  // 3. Intentar llamada al endpoint backend seguro o Gemini API si está configurado
+  // 3. Intentar llamada al endpoint backend seguro o Gemini API si el archivo es real (no muestra demo vacía)
+  const isSyntheticDemoFile = file.size < 32;
   const apiEndpoint =
     (typeof import.meta !== 'undefined' && import.meta.env?.VITE_MEDICAL_AI_ENDPOINT) ||
     '/api/analyze-medical-report';
 
-  try {
-    const base64Data = await fileToBase64(file);
-    const response = await fetch(apiEndpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        fileName: file.name,
-        mimeType: file.type || 'application/pdf',
-        base64Data,
-      }),
-    });
+  if (!isSyntheticDemoFile) {
+    try {
+      const base64Data = await fileToBase64(file);
+      const response = await fetch(apiEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fileName: file.name,
+          mimeType: file.type || 'application/pdf',
+          base64Data,
+        }),
+      });
 
-    if (response.ok) {
-      const data = await response.json();
-      return {
-        id: `REP-${Date.now()}`,
-        fileName: file.name,
-        reportType: data.reportType || 'Analítica Sanguínea',
-        reportDate: data.reportDate || new Date().toISOString().slice(0, 10),
-        uploadedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        aiClinicalSummary: data.aiClinicalSummary,
-        markers: data.markers || {},
-        flaggedFindings: data.flaggedFindings || [],
-        contraindications: data.contraindications || [],
-        detectedSystolicBP: data.detectedSystolicBP,
-        detectedDiastolicBP: data.detectedDiastolicBP,
-        detectedHeartRate: data.detectedHeartRate,
-      };
+      if (response.ok) {
+        const data = await response.json();
+        return {
+          id: `REP-${Date.now()}`,
+          fileName: file.name,
+          reportType: data.reportType || 'Analítica Sanguínea',
+          reportDate: data.reportDate || new Date().toISOString().slice(0, 10),
+          uploadedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          aiClinicalSummary: data.aiClinicalSummary,
+          markers: data.markers || {},
+          flaggedFindings: data.flaggedFindings || [],
+          contraindications: data.contraindications || [],
+          detectedSystolicBP: data.detectedSystolicBP,
+          detectedDiastolicBP: data.detectedDiastolicBP,
+          detectedHeartRate: data.detectedHeartRate,
+          detectedWeight: data.detectedWeight,
+          detectedHeight: data.detectedHeight,
+          detectedWaist: data.detectedWaist,
+          suggestedGoals: data.suggestedGoals
+            ? {
+                ...data.suggestedGoals,
+                source: 'ai_report' as const,
+              }
+            : undefined,
+        };
+      }
+    } catch {
+      // Si no hay backend activo en modo local/demo, continúa con el motor inteligente
     }
-  } catch {
-    // Si no hay backend activo en modo local/demo, continúa con el motor inteligente
   }
 
   // 4. Extractor clínico inteligente local (simulación multimodal determinista)
