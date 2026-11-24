@@ -24,6 +24,7 @@ import {
 } from './healthAnalytics';
 import { AVAILABLE_SUPPLEMENTS, INITIAL_CLIENT_USERS, INITIAL_PRODUCTS } from '../data/seedData';
 import { analyzeMedicalReportFile, parseTextLabMarkers } from './medicalReportAnalyzer';
+import { parseNonNegativeMetric } from '../components/AdminDashboard';
 
 const sampleProduct: Product = {
   id: 'NV-01',
@@ -608,4 +609,18 @@ test('Clients start with zero metrics/goals until a complete medical report is u
   const impactNoWaist = calculateProjectedImpact(bioWithoutWaist, aiGoals, [], estCal, aiGoals.timelineWeeks, [completeParsed], 34);
   assert.equal(impactNoWaist.whtrStatus, 'No reportada');
   assert.equal(impactNoWaist.waistDelta, 0);
+});
+
+test('Admin product metric parser preserves explicit zero macros and computes stock status', () => {
+  // Explicit '0' must NOT fall back to non-zero defaults
+  assert.equal(parseNonNegativeMetric('0', 100), 0);
+  assert.equal(parseNonNegativeMetric('0.0', 12), 0);
+  assert.equal(parseNonNegativeMetric('18.5', 0), 18.5);
+  assert.equal(parseNonNegativeMetric('', 12), 12);
+  assert.equal(parseNonNegativeMetric('-5', 4), 4);
+
+  // Bulk stock status transitions
+  assert.equal(computeProductStatus(0), 'Agotado');
+  assert.equal(computeProductStatus(8), 'Bajo Stock');
+  assert.equal(computeProductStatus(25), 'Activo');
 });

@@ -683,7 +683,39 @@ export default function App() {
     setProducts((prev) =>
       prev.map((p) => (p.id === updatedProd.id ? updatedProd : p))
     );
+    setCart((prev) =>
+      prev
+        .map((item) => {
+          if (item.product.id !== updatedProd.id) return item;
+          if (updatedProd.stock <= 0) return null;
+          return {
+            product: updatedProd,
+            quantity: Math.min(item.quantity, updatedProd.stock),
+          };
+        })
+        .filter((item): item is CartItem => item !== null)
+    );
     void nutriApi.saveProductToDb(updatedProd);
+  };
+
+  const handleBulkUpdateProducts = (updatedList: Product[]) => {
+    if (updatedList.length === 0) return;
+    const map = new Map(updatedList.map((p) => [p.id, p]));
+    setProducts((prev) => prev.map((p) => map.get(p.id) ?? p));
+    setCart((prev) =>
+      prev
+        .map((item) => {
+          const updated = map.get(item.product.id);
+          if (!updated) return item;
+          if (updated.stock <= 0) return null;
+          return {
+            product: updated,
+            quantity: Math.min(item.quantity, updated.stock),
+          };
+        })
+        .filter((item): item is CartItem => item !== null)
+    );
+    void nutriApi.saveProductsBulkToDb(updatedList);
   };
 
   const handleDeleteProduct = (productId: string) => {
@@ -961,6 +993,7 @@ export default function App() {
             recentOrders={recentOrders}
             onAddProduct={handleAddProduct}
             onUpdateProduct={handleUpdateProduct}
+            onBulkUpdateProducts={handleBulkUpdateProducts}
             onDeleteProduct={handleDeleteProduct}
             onAddWeekSale={handleAddWeekSale}
             onResetSalesHistory={handleResetSalesHistory}
@@ -1060,7 +1093,13 @@ export default function App() {
                           </span>
                           <button
                             type="button"
-                            onClick={() => handleAddToCart(products[0] ?? INITIAL_PRODUCTS[0])}
+                            onClick={() =>
+                              handleAddToCart(
+                                products.find((p) => p.id === 'NV-101') ??
+                                  products[0] ??
+                                  INITIAL_PRODUCTS[0]
+                              )
+                            }
                             className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-xl transition-colors"
                           >
                             Añadir al Carrito

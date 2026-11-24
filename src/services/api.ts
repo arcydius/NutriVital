@@ -643,6 +643,33 @@ export const nutriApi = {
     }
   },
 
+  async saveProductsBulkToDb(productsList: Product[]) {
+    if (!supabase || productsList.length === 0) return null;
+    try {
+      const payload = productsList.map((product) => ({
+        id: product.id,
+        name: product.name,
+        category: product.category,
+        tag: product.tag,
+        calories: product.calories,
+        protein: product.protein,
+        fiber: product.fiber,
+        price: product.price,
+        stock: product.stock,
+        status: product.status,
+        description: product.description,
+        serving_size: product.servingSize,
+        illustration: product.illustration,
+      }));
+      const { error } = await supabase.from('products').upsert(payload, { onConflict: 'id' });
+      if (reportSupabaseError('saveProductsBulkToDb', error)) return null;
+      return true;
+    } catch (err) {
+      console.error('[NutriVital Supabase] Excepción guardando lote de productos:', err);
+      return null;
+    }
+  },
+
   async deleteProductFromDb(productId: string) {
     if (!supabase) return null;
     try {
