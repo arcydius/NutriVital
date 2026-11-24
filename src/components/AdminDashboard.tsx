@@ -7,7 +7,6 @@ import {
   Package,
   DollarSign,
   ShieldCheck,
-  LogOut,
   Calculator,
   Users,
   Check,
@@ -55,7 +54,6 @@ interface AdminDashboardProps {
   onUpdateProduct: (product: Product) => void;
   onBulkUpdateProducts: (products: Product[]) => void;
   onDeleteProduct: (productId: string) => void;
-  onLogout: () => void;
   onOpenRegisterAdmin: () => void;
 }
 
@@ -96,7 +94,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onUpdateProduct,
   onBulkUpdateProducts,
   onDeleteProduct,
-  onLogout,
   onOpenRegisterAdmin,
 }) => {
   const [regressionMetric, setRegressionMetric] = useState<'revenue' | 'units'>('revenue');
@@ -697,14 +694,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             >
               <Users className="w-4 h-4 text-emerald-700" />
               <span>Administradores ({adminUsers.length})</span>
-            </button>
-            <button
-              type="button"
-              onClick={onLogout}
-              className="px-4 py-2 text-xs font-semibold text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 rounded-xl transition-colors flex items-center gap-1.5 whitespace-nowrap"
-            >
-              <LogOut className="w-4 h-4" />
-              <span>Cerrar Sesión</span>
             </button>
           </div>
         </div>

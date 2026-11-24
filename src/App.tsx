@@ -944,7 +944,6 @@ export default function App() {
             onUpdateProduct={handleUpdateProduct}
             onBulkUpdateProducts={handleBulkUpdateProducts}
             onDeleteProduct={handleDeleteProduct}
-            onLogout={handleAdminLogout}
             onOpenRegisterAdmin={() => {
               setAuthModalMode('register');
               setIsAuthModalOpen(true);
@@ -1321,15 +1320,7 @@ export default function App() {
             >
               Simulador
             </a>
-            {adminSession ? (
-              <button
-                type="button"
-                onClick={handleAdminLogout}
-                className="hover:text-red-600 font-medium text-red-500 text-xs"
-              >
-                Cerrar Sesión Administrador
-              </button>
-            ) : (
+            {!adminSession && (
               <button
                 type="button"
                 onClick={handleSwitchToAdmin}
